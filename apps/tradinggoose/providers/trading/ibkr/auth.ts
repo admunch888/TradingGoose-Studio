@@ -12,12 +12,27 @@ import { resolveIbkrApiBaseUrl, resolveIbkrApiIp } from '@/providers/trading/ibk
  *
  * We pick by base URL rather than by a flag so the two can never disagree.
  */
-export const isIbkrHostedApi = (): boolean => /(^|\.)api\.ibkr\.com/i.test(resolveIbkrApiBaseUrl())
+const IBKR_HOSTED_HOST = /(^|\.)api\.ibkr\.com$/i
 
-export const buildIbkrAuthHeaders = (params: { accessToken?: string } = {}): Record<
-  string,
-  string
-> => {
+/**
+ * The canonical hosted URL is `https://api.ibkr.com/v1/api`, whose host is
+ * preceded by `//`. A `(^|\.)` anchored pattern never matches that form, which
+ * silently disabled the hosted branch below and stripped the bearer token from
+ * every hosted request. Match the parsed hostname instead, and keep a substring
+ * fallback for values that are not absolute URLs.
+ */
+export const isIbkrHostedApi = (): boolean => {
+  const base = resolveIbkrApiBaseUrl()
+  try {
+    return IBKR_HOSTED_HOST.test(new URL(base).hostname)
+  } catch {
+    return /api\.ibkr\.com/i.test(base)
+  }
+}
+
+export const buildIbkrAuthHeaders = (
+  params: { accessToken?: string } = {}
+): Record<string, string> => {
   if (!isIbkrHostedApi()) {
     // Gateway mode: the session cookie does the work. Nothing to add.
     return { Accept: 'application/json' }
