@@ -61,16 +61,22 @@ const asBrokerRequestError = (error: unknown): BrokerRequestErrorLike | null => 
 }
 
 /**
- * A rejected credential or session needs an instruction, not a status code: the
- * IBKR Client Portal Gateway has no way to re-authenticate itself, so the only
- * remedy is a browser login at the gateway URL.
+ * A rejected credential or session needs an instruction, not a status code.
+ *
+ * This must NOT name a URL. The gateway's scheme and port are
+ * deployment-specific - this deployment serves plain HTTP behind a portproxy -
+ * and naming the wrong one sent an operator to a port that was not listening.
+ * The same rule is pinned next to the session provider's own message; the two
+ * deliberately do not share a constant, because the market layer must not import
+ * the trading layer (the cycle this provider already had to unwind), so the rule
+ * is enforced by a test on each side instead.
  */
 const brokerFailureHint = (provider: string | undefined, status: number): string | undefined => {
   if (status !== 401 && status !== 403) return undefined
   if (provider === 'ibkr') {
     return (
       'The IBKR Client Portal Gateway session is not authenticated - log in at the ' +
-      'gateway URL (default https://localhost:5001) and retry'
+      'gateway URL in a browser on the host that runs the gateway, then retry'
     )
   }
   return 'The broker rejected the credentials or session for this connection'
