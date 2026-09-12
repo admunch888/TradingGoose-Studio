@@ -150,8 +150,17 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
             },
             sink: {
               send: (payload: Record<string, unknown>) => {
-                const { event, ...rest } = payload as { event: string } & Record<string, unknown>
-                send(event, rest)
+                // The client dispatches on the FRAME (store.ts: `handler(data, ...)`)
+                // and reads fields straight off it (data.item_id, data.delta,
+                // data.item, data.toolCallId). Forwarding the agent's { event, data }
+                // payload unchanged nested every field one level too deep, so
+                // response.output_text.delta's typeof guard dropped each delta and a
+                // local turn rendered nothing while still persisting the reply.
+                const { event, data, ...rest } = payload as {
+                  event: string
+                  data?: Record<string, unknown>
+                } & Record<string, unknown>
+                send(event, { ...(data ?? {}), ...rest })
               },
               close: () => {},
               error: () => {},
@@ -202,7 +211,7 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
       } catch (error) {
         logger.error(`[${params.requestId}] Local copilot turn failed`, { error })
         send('error', {
-          message: error instanceof Error ? error.message : 'Local copilot request failed',
+          error: error instanceof Error ? error.message : 'Local copilot request failed',
         })
         send('turn_state', { status: 'error', phase: 'error' })
       } finally {
@@ -258,8 +267,17 @@ export async function handleLocalCopilotContinuation(
             },
             sink: {
               send: (payload: Record<string, unknown>) => {
-                const { event, ...rest } = payload as { event: string } & Record<string, unknown>
-                send(event, rest)
+                // The client dispatches on the FRAME (store.ts: `handler(data, ...)`)
+                // and reads fields straight off it (data.item_id, data.delta,
+                // data.item, data.toolCallId). Forwarding the agent's { event, data }
+                // payload unchanged nested every field one level too deep, so
+                // response.output_text.delta's typeof guard dropped each delta and a
+                // local turn rendered nothing while still persisting the reply.
+                const { event, data, ...rest } = payload as {
+                  event: string
+                  data?: Record<string, unknown>
+                } & Record<string, unknown>
+                send(event, { ...(data ?? {}), ...rest })
               },
               close: () => {},
               error: () => {},
