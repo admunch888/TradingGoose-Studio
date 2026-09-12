@@ -26,7 +26,13 @@ const IBKR_BAR_MAP: Record<string, string> = {
   '1mo': '1m',
 }
 
-/** Largest lookback IBKR will serve for a given bar size, in days. */
+/**
+ * Largest lookback IBKR will serve for a given bar size, in days.
+ *
+ * `1m` means one MONTH here (one minute is `1min`), and it is capped at 15 years
+ * rather than the 20 the bar size alone would allow: IBKR's period grammar tops
+ * out at 15y, so a longer lookback is not expressible in one request.
+ */
 const MAX_PERIOD_DAYS: Record<string, number> = {
   '1min': 1,
   '5min': 7,
@@ -35,7 +41,7 @@ const MAX_PERIOD_DAYS: Record<string, number> = {
   '1h': 30,
   '1d': 365,
   '1w': 365 * 5,
-  '1m': 365 * 20,
+  '1m': 365 * 15,
 }
 
 const resolveBar = (interval?: string): string => (interval && IBKR_BAR_MAP[interval]) || '1d'
@@ -59,13 +65,21 @@ const toIsoString = (millis?: number): string | undefined => {
  * IBKR takes a duration string, not a from/to window. We convert the requested
  * range into the smallest period that covers it, clamped to what the chosen bar
  * size actually supports so the request is not rejected outright.
+ *
+ * The period is always expressed in DAYS - or whole years past IBKR's 1000-day
+ * ceiling - and never in months, because months rounded UP and defeated the clamp
+ * above. A 365-day window for daily bars became `13m`, i.e. about 395 days
+ * against the very 365-day limit the clamp exists to respect, and a 45-day window
+ * became `2m`, asking for 60 days of data the caller never requested. Days cannot
+ * round past the cap.
+ *
+ * Exported for tests: it is pure, and the rounding is exactly what broke.
  */
-const buildPeriod = (startMs: number, endMs: number, bar: string): string => {
+export const buildPeriod = (startMs: number, endMs: number, bar: string): string => {
   const days = Math.max(1, Math.ceil((endMs - startMs) / 86_400_000))
   const capped = Math.min(days, MAX_PERIOD_DAYS[bar] ?? 365)
-  if (capped <= 30) return `${capped}d`
-  if (capped <= 365) return `${Math.ceil(capped / 30)}m`
-  return `${Math.ceil(capped / 365)}y`
+  if (capped <= 1000) return `${capped}d`
+  return `${Math.min(15, Math.ceil(capped / 365))}y`
 }
 
 /** IBKR wants startTime as YYYYMMDD-HH:mm:ss, in UTC. */
@@ -145,9 +159,7 @@ export async function fetchIbkrSeries(request: MarketSeriesRequest): Promise<Mar
   // IBKR scales prices for some contracts; dividing is required for
   // correctness and its absence is silent rather than an error.
   const priceFactor =
-    typeof response?.priceFactor === 'number' && response.priceFactor > 0
-      ? response.priceFactor
-      : 1
+    typeof response?.priceFactor === 'number' && response.priceFactor > 0 ? response.priceFactor : 1
   const scale = (value?: number): number | undefined =>
     typeof value === 'number' && Number.isFinite(value) ? value / priceFactor : undefined
 
