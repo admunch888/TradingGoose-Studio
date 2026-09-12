@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MarketProviderSelector } from '@/components/market-selector/provider-selector'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { getPublicCopy } from '@/i18n/public-copy'
+import { getMarketProviderOptions } from '@/providers/market/providers'
 
 describe('MarketProviderSelector', () => {
   let container: HTMLDivElement
@@ -84,5 +85,19 @@ describe('MarketProviderSelector', () => {
     expect(button?.textContent).not.toContain('Market:')
     expect(button?.className).toContain('h-10')
     expect(button?.className).toContain('rounded-md')
+  })
+
+  it('renders a brand icon for the selected IBKR market provider', () => {
+    const copy = getPublicCopy('en').workspace.widgets.providerControls.marketSelector
+    renderWithLocale(
+      'en',
+      <MarketProviderSelector value='ibkr' options={getMarketProviderOptions()} />
+    )
+
+    const button = container.querySelector(`button[aria-label="${copy.ariaLabel}"]`)
+    // the trigger's own chevron is a direct child of the button, so an svg nested
+    // inside the label row can only be the provider's brand icon
+    expect(button?.textContent).toContain('IBKR')
+    expect(button?.querySelector('div > svg')).not.toBeNull()
   })
 })

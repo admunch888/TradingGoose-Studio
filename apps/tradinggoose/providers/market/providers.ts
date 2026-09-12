@@ -11,6 +11,7 @@ import {
   AlpacaIcon,
   AlphaVantageIcon,
   FinnhubIcon,
+  IbkrIcon,
   YahooIcon,
 } from '@/components/icons/provider-icons'
 import type { ListingIdentity } from '@/lib/listing/identity'
@@ -220,6 +221,7 @@ export const MARKET_PROVIDER_DEFINITIONS: Record<string, MarketProviderDefinitio
     name: 'IBKR',
     description: 'IBKR market data (live quotes & historical bars).',
     config: ibkrMarketProviderConfig,
+    icon: IbkrIcon,
   },
 }
 

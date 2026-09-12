@@ -356,6 +356,40 @@ export function FinnhubIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+// IBKR's published lockup (interactivebrokers.com/images/web/logos/ibkr-logo.svg,
+// viewBox 0 0 230.4 88.4) is a mark plus an "IBKR" wordmark. Only the mark is kept
+// here: the provider selector renders icons in a 16px box next to the provider name,
+// where the 230.4x88.4 lockup would letterbox to roughly 16x6px and be unreadable.
+export function IbkrIcon(props: SVGProps<SVGSVGElement>) {
+  const gradientId = `ibkr_mark_gradient_${useId()}`
+
+  return (
+    <svg
+      {...props}
+      viewBox='2.7 1.5 43.8 85.3'
+      preserveAspectRatio='xMidYMid meet'
+      xmlns='http://www.w3.org/2000/svg'
+    >
+      <defs>
+        <linearGradient
+          id={gradientId}
+          gradientUnits='userSpaceOnUse'
+          x1='40.4179'
+          y1='66.0445'
+          x2='2.6792'
+          y2='66.0445'
+        >
+          <stop offset='0' stopColor='#D71F27' />
+          <stop offset='1' stopColor='#971B1E' />
+        </linearGradient>
+      </defs>
+      <polygon points='40.4,86.8 2.7,86.8 2.7,45.3' fill={`url(#${gradientId})`} />
+      <polygon points='40.4,1.5 2.7,45.3 2.7,86.8' fill='#D71F27' />
+      <circle cx='35.2' cy='55.5' r='11.3' fill='#D71F27' />
+    </svg>
+  )
+}
+
 export const VertexIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg
     {...props}
