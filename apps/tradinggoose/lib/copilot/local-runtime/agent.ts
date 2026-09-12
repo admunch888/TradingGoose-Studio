@@ -1,14 +1,15 @@
 import OpenAI from 'openai'
-import { createLogger } from '@/lib/logs/console/logger'
-import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
+import { getLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
+import type { LocalAgentTurnParams } from '@/lib/copilot/local-runtime/types'
+import { withTimeout } from '@/lib/copilot/local-runtime/with-timeout'
 import {
-  DEFAULT_LOCAL_CONTEXT_WINDOW,
   buildLocalWorkingMessages,
+  DEFAULT_LOCAL_CONTEXT_WINDOW,
   type LocalWorkingMessage,
 } from '@/lib/copilot/local-runtime/working-messages'
-import { getLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
-import type { LocalAgentTurnParams } from '@/lib/copilot/local-runtime/types'
+import { createLogger } from '@/lib/logs/console/logger'
+import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
 
 const logger = createLogger('LocalCopilotAgent')
 
@@ -31,6 +32,9 @@ export const LOCAL_CLIENT_ONLY_TOOLS = new Set([
   'deploy_workflow',
   'sleep',
 ])
+
+/** Hard cap on a single server tool - see with-timeout.ts for why it exists. */
+const TOOL_TIMEOUT_MS = 120_000
 
 const MAX_TOOL_ITERATIONS = 20
 /** Hard cap on assistant text before truncation, to bound the SSE payload. */
@@ -268,22 +272,36 @@ export async function runLocalCopilotTurn(
         payload = {}
       }
 
-      const {
-        executeLocalCopilotServerTool,
-      } = await import('@/lib/copilot/local-runtime/tool-execution')
+      const { executeLocalCopilotServerTool } = await import(
+        '@/lib/copilot/local-runtime/tool-execution'
+      )
 
-      const result = await executeLocalCopilotServerTool({
-        toolName: call.name,
-        payload,
-        context: {
-          userId: ctx.userId,
-          accessLevel: ctx.accessLevel,
-          ...(ctx.contextEntityKind ? { contextEntityKind: ctx.contextEntityKind } : {}),
-          ...(ctx.contextEntityId ? { contextEntityId: ctx.contextEntityId } : {}),
-          ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
-          signal: ctx.signal,
-        },
-      })
+      let result: Awaited<ReturnType<typeof executeLocalCopilotServerTool>>
+      try {
+        result = await withTimeout(
+          executeLocalCopilotServerTool({
+            toolName: call.name,
+            payload,
+            context: {
+              userId: ctx.userId,
+              accessLevel: ctx.accessLevel,
+              ...(ctx.contextEntityKind ? { contextEntityKind: ctx.contextEntityKind } : {}),
+              ...(ctx.contextEntityId ? { contextEntityId: ctx.contextEntityId } : {}),
+              ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+              signal: ctx.signal,
+            },
+          }),
+          TOOL_TIMEOUT_MS,
+          `Tool ${call.name}`
+        )
+      } catch (error) {
+        // A hung or throwing tool must fail the CALL, not the whole turn: the model
+        // can react to the error, and the user gets an answer either way.
+        result = {
+          success: false,
+          errorMessage: error instanceof Error ? error.message : 'Tool execution failed',
+        }
+      }
 
       logger.info('Local copilot tool executed', {
         conversationId: params.conversationId,

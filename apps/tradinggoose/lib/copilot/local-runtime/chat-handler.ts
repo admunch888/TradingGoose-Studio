@@ -1,19 +1,27 @@
-import OpenAI from 'openai'
-import { db } from '@tradinggoose/db'
-import { copilotReviewSessions } from '@tradinggoose/db'
+import { copilotReviewSessions, db } from '@tradinggoose/db'
 import { eq } from 'drizzle-orm'
-import { createLogger } from '@/lib/logs/console/logger'
-import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
-import { SSE_HEADERS, encodeSSE } from '@/lib/utils'
 import { runLocalCopilotTurn } from '@/lib/copilot/local-runtime/agent'
-import {
-  persistLocalWorkingMessage,
-  persistLocalContinuation,
-} from '@/lib/copilot/local-runtime/persistence'
+import { persistLocalWorkingMessage } from '@/lib/copilot/local-runtime/persistence'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
 import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-messages'
+import { createLogger } from '@/lib/logs/console/logger'
+import { encodeSSE, SSE_HEADERS } from '@/lib/utils'
 
 const logger = createLogger('LocalCopilotChatHandler')
+
+/**
+ * SSE headers for a local turn.
+ *
+ * `no-transform` is load-bearing, not decoration: compression middleware and
+ * intermediaries buffer anything they are allowed to transform, so without it a
+ * streamed reply is held and delivered as one lump at the end - and behind a proxy
+ * that buffers or times out, it never arrives at all. The local runtime shipped
+ * without it while /api/copilot/tools/mark-complete already carried it.
+ */
+const LOCAL_SSE_HEADERS = {
+  ...SSE_HEADERS,
+  'Cache-Control': 'no-cache, no-transform',
+} as const
 
 export interface LocalChatHandlerParams {
   model: string
@@ -84,9 +92,7 @@ async function persistAssistantTranscript(params: {
  * Streams a full local Copilot turn (inference + tool execution + review
  * staging) to the client using the same SSE contract as the managed runtime.
  */
-export async function handleLocalCopilotChat(
-  params: LocalChatHandlerParams
-): Promise<Response> {
+export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Promise<Response> {
   const conversationId = params.conversationId || params.reviewSessionId
   const assistantMessageId = `local_assistant_${crypto.randomUUID()}`
   const bareModel = params.model.startsWith(LOCAL_COPILOT_MODEL_PREFIX)
@@ -206,7 +212,7 @@ export async function handleLocalCopilotChat(
     },
   })
 
-  return new Response(stream, { headers: SSE_HEADERS })
+  return new Response(stream, { headers: LOCAL_SSE_HEADERS })
 }
 
 /**
