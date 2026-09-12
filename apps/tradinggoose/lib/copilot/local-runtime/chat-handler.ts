@@ -189,8 +189,13 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
           })
           send('turn_state', { status: 'in_progress', phase: 'waiting_for_tools' })
         } else {
-          send('response.completed', {})
+          // The terminal turn_state MUST be sent BEFORE response.completed: the
+          // client stops reading the stream the moment response.completed sets
+          // `streamComplete` (stores/copilot/store.ts breaks its read loop on
+          // it), so anything queued behind it is discarded - which left the
+          // turn persisted as in_progress with the spinner still running.
           send('turn_state', { status: 'completed', phase: 'completed' })
+          send('response.completed', {})
         }
 
         await persistAssistantTranscript({
@@ -306,8 +311,13 @@ export async function handleLocalCopilotContinuation(
           })
           send('turn_state', { status: 'in_progress', phase: 'waiting_for_tools' })
         } else {
-          send('response.completed', {})
+          // The terminal turn_state MUST be sent BEFORE response.completed: the
+          // client stops reading the stream the moment response.completed sets
+          // `streamComplete` (stores/copilot/store.ts breaks its read loop on
+          // it), so anything queued behind it is discarded - which left the
+          // turn persisted as in_progress with the spinner still running.
           send('turn_state', { status: 'completed', phase: 'completed' })
+          send('response.completed', {})
         }
 
         await persistLocalContinuationText(params.reviewSessionId, result.text)
@@ -316,7 +326,9 @@ export async function handleLocalCopilotContinuation(
       } catch (error) {
         logger.error(`[${params.requestId}] Local copilot continuation failed`, { error })
         send('error', {
-          message: error instanceof Error ? error.message : 'Local copilot continuation failed',
+          // The client reads `data.error`; a `message` field renders as a
+          // generic failure with the reason dropped.
+          error: error instanceof Error ? error.message : 'Local copilot continuation failed',
         })
         send('turn_state', { status: 'error', phase: 'error' })
       } finally {
