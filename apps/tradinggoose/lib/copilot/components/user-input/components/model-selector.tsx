@@ -9,10 +9,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui'
-import { COPILOT_RUNTIME_MODELS } from '@/lib/copilot/runtime-models'
 import { isCopilotLocalRuntimeModel } from '@/lib/copilot/local-runtime/runtime-models'
-import { useProviderModels } from '@/hooks/queries/providers'
+import { COPILOT_RUNTIME_MODELS } from '@/lib/copilot/runtime-models'
 import { cn } from '@/lib/utils'
+import { useProviderModels } from '@/hooks/queries/providers'
 import { getProviderIcon } from '@/providers/ai/models'
 import { useCopilotStore } from '@/stores/copilot/store'
 
@@ -22,7 +22,10 @@ interface ModelSelectorProps {
 }
 
 function ModelLabel({ model, className }: { model: string; className?: string }) {
-  const modelName = model.split('/').pop() ?? model
+  // Keep `vllm/` visible for self-hosted models: it is the only cue that separates a
+  // local turn (the in-process runtime) from a hosted one (the Copilot service), and
+  // stripping it made the two indistinguishable in this list.
+  const modelName = isCopilotLocalRuntimeModel(model) ? model : (model.split('/').pop() ?? model)
   const ProviderIcon = getProviderIcon(modelName)
 
   return (
