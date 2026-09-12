@@ -37,6 +37,19 @@ describe('normalizeMarketProviderError', () => {
     expect(normalized.message).toContain('log in at the gateway URL')
   })
 
+  it('names no deployment-specific URL in the session hint', () => {
+    // This hint once carried ":5001" while the deployment served the gateway on
+    // ":5002" behind a portproxy, which sent the operator to a port that was not
+    // listening. The same rule is asserted next to the session provider's
+    // message; the two cannot share a constant without the market layer
+    // importing the trading layer, so each side guards itself.
+    for (const status of [401, 403]) {
+      const normalized = normalizeMarketProviderError(brokerError(status), 'ibkr')
+      expect(normalized.message).toContain('log in at the gateway URL')
+      expect(normalized.message).not.toMatch(/localhost|http|:50\d\d/)
+    }
+  })
+
   it('does not attach the session hint to a non-auth failure', () => {
     const normalized = normalizeMarketProviderError(brokerError(400), 'ibkr')
 
