@@ -32,7 +32,8 @@ export interface SeriesIntervalCapabilities {
 export const resolveDefaultSeriesWindow = (
   allowedModes?: MarketSeriesWindowMode[]
 ): MarketSeriesWindow | null => {
-  const modes = allowedModes && allowedModes.length > 0 ? allowedModes : (['bars'] as const)
+  const modes: MarketSeriesWindowMode[] =
+    allowedModes && allowedModes.length > 0 ? allowedModes : ['bars']
 
   if (modes.includes('bars')) {
     return { mode: 'bars', barCount: DEFAULT_SERIES_BAR_COUNT }
