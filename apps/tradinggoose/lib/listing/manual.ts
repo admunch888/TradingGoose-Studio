@@ -1,9 +1,9 @@
 import {
+  type ListingIdentity,
   ListingIdentitySchema,
+  type ListingResolved,
   ListingResolvedSchema,
   MANUAL_LISTING_ASSET_CLASSES,
-  type ListingIdentity,
-  type ListingResolved,
 } from '@/lib/listing/identity'
 
 /**
@@ -96,9 +96,7 @@ export const buildManualListingIdentity = (draft: ManualListingDraft): ListingId
  * (icon, timezone, MIC, rank) is genuinely absent and stays absent, because
  * the catalogue is the only thing that has it.
  */
-export const buildManualListingValue = (
-  draft: ManualListingDraft
-): ListingResolved | null => {
+export const buildManualListingValue = (draft: ManualListingDraft): ListingResolved | null => {
   const listingIdentity = buildManualListingIdentity(draft)
   if (!listingIdentity) return null
 

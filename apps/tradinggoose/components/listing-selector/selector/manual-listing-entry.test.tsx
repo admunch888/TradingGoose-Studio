@@ -20,7 +20,9 @@ const setNativeValue = (element: HTMLInputElement | HTMLSelectElement, value: st
     element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
   setter?.call(element, value)
-  element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
+  element.dispatchEvent(
+    new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true })
+  )
 }
 
 describe('ManualListingEntry', () => {
@@ -51,7 +53,8 @@ describe('ManualListingEntry', () => {
     })
   }
 
-  const symbolInput = () => container.querySelector<HTMLInputElement>('input[name="manual-listing-symbol"]')
+  const symbolInput = () =>
+    container.querySelector<HTMLInputElement>('input[name="manual-listing-symbol"]')
   const assetClassSelect = () =>
     container.querySelector<HTMLSelectElement>('select[name="manual-listing-asset-class"]')
   const submit = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')
@@ -90,7 +93,10 @@ describe('ManualListingEntry', () => {
     act(() => {
       setNativeValue(symbolInput()!, 'MESZ26')
       setNativeValue(assetClassSelect()!, 'future')
-      setNativeValue(container.querySelector<HTMLInputElement>('input[name="manual-listing-market"]')!, 'CME')
+      setNativeValue(
+        container.querySelector<HTMLInputElement>('input[name="manual-listing-market"]')!,
+        'CME'
+      )
     })
     await act(async () => {
       submit()?.click()

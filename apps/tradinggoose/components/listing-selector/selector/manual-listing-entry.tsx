@@ -3,7 +3,7 @@
 import { type FormEvent, useId, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { MANUAL_LISTING_ASSET_CLASSES, type ListingResolved } from '@/lib/listing/identity'
+import { type ListingResolved, MANUAL_LISTING_ASSET_CLASSES } from '@/lib/listing/identity'
 import { buildManualListingValue } from '@/lib/listing/manual'
 import { useWorkspaceWidgetsMessages } from '@/i18n/workspace-widget-hooks'
 
