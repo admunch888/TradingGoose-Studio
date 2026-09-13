@@ -21,6 +21,9 @@ import { replaceCopilotWorkspaceEntityMentionsWithIds } from '@/lib/copilot/chat
 import { mirrorLocalCopilotCompletionUsageReports } from '@/lib/copilot/completion-usage-billing'
 import { MAX_COPILOT_CONTEXTS_PER_TURN } from '@/lib/copilot/context-limits'
 import { normalizeFunctionCallArguments } from '@/lib/copilot/function-call-args'
+import { handleLocalCopilotChat } from '@/lib/copilot/local-runtime/chat-handler'
+import { isLocalWorkingItem } from '@/lib/copilot/local-runtime/persistence'
+import { isCopilotLocalRuntimeModel as isLocalCopilotModel } from '@/lib/copilot/local-runtime/runtime-models'
 import {
   mapSessionToApiResponse,
   SESSION_SELECT_COLUMNS,
@@ -37,18 +40,9 @@ import {
   type ReviewTurnStatus,
 } from '@/lib/copilot/review-sessions/thread-history'
 import {
-  COPILOT_RUNTIME_MODELS,
   type CopilotRuntimeModel,
   DEFAULT_COPILOT_RUNTIME_MODEL,
 } from '@/lib/copilot/runtime-models'
-
-import { isCopilotLocalRuntimeModel as isLocalCopilotModel } from '@/lib/copilot/local-runtime/runtime-models'
-import {
-  isLocalWorkingItem,
-  loadLocalWorkingMessages,
-} from '@/lib/copilot/local-runtime/persistence'
-import { handleLocalCopilotChat } from '@/lib/copilot/local-runtime/chat-handler'
-
 import {
   COPILOT_RUNTIME_CONFIG_PLACEHOLDER,
   COPILOT_SESSION_KIND,

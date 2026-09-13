@@ -12,8 +12,8 @@
  * shared contract is pinned here.
  */
 import { describe, expect, it } from 'vitest'
-import { requireCopilotEntityId } from '@/lib/copilot/tools/entity-target'
 import { ENTITY_KIND_WORKFLOW } from '@/lib/copilot/review-sessions/types'
+import { requireCopilotEntityId } from '@/lib/copilot/tools/entity-target'
 
 const context = {
   contextEntityKind: ENTITY_KIND_WORKFLOW,
@@ -66,7 +66,10 @@ describe('requireCopilotEntityId', () => {
       'entityId is required for edit_workflow'
     )
     expect(() =>
-      requireCopilotEntityId({}, { toolName: 'edit_workflow', context: {}, entityKind: ENTITY_KIND_WORKFLOW })
+      requireCopilotEntityId(
+        {},
+        { toolName: 'edit_workflow', context: {}, entityKind: ENTITY_KIND_WORKFLOW }
+      )
     ).toThrow('entityId is required for edit_workflow')
     expect(() => requireCopilotEntityId({})).toThrow('entityId is required')
   })

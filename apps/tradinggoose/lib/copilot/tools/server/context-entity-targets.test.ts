@@ -17,7 +17,11 @@ describe('buildContextDerivedToolArgs', () => {
    */
   it('fills the open entity id for a tool that targets that entity kind', () => {
     expect(
-      buildContextDerivedToolArgs('edit_workflow', { entityDocument: 'flowchart TD' }, WORKFLOW_CONTEXT)
+      buildContextDerivedToolArgs(
+        'edit_workflow',
+        { entityDocument: 'flowchart TD' },
+        WORKFLOW_CONTEXT
+      )
     ).toEqual({ workspaceId: 'workspace-1', entityId: 'wf-open' })
   })
 
@@ -47,7 +51,11 @@ describe('buildContextDerivedToolArgs', () => {
    */
   it('never crosses entity kinds', () => {
     expect(
-      buildContextDerivedToolArgs('edit_workflow', {}, { ...WORKFLOW_CONTEXT, contextEntityKind: 'watchlist' })
+      buildContextDerivedToolArgs(
+        'edit_workflow',
+        {},
+        { ...WORKFLOW_CONTEXT, contextEntityKind: 'watchlist' }
+      )
     ).toEqual({ workspaceId: 'workspace-1' })
   })
 

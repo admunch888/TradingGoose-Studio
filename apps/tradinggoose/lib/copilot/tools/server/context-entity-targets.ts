@@ -1,8 +1,5 @@
 import { CopilotTool } from '@/lib/copilot/registry'
-import {
-  ENTITY_KIND_WORKFLOW,
-  type ReviewEntityKind,
-} from '@/lib/copilot/review-sessions/types'
+import { ENTITY_KIND_WORKFLOW, type ReviewEntityKind } from '@/lib/copilot/review-sessions/types'
 import type { ServerToolExecutionContext } from '@/lib/copilot/tools/server/base-tool'
 
 /**
@@ -34,8 +31,7 @@ export function buildContextDerivedToolArgs(
   payload: unknown,
   context?: ServerToolExecutionContext
 ): Record<string, unknown> {
-  const isPlainPayload =
-    !payload || (typeof payload === 'object' && !Array.isArray(payload))
+  const isPlainPayload = !payload || (typeof payload === 'object' && !Array.isArray(payload))
   if (!isPlainPayload) {
     return {}
   }

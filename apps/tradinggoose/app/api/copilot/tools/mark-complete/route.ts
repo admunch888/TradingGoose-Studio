@@ -17,11 +17,8 @@ import {
   toLocalRuntimeModelName,
 } from '@/lib/copilot/local-runtime/persistence'
 import { isCopilotLocalRuntimeModel } from '@/lib/copilot/local-runtime/runtime-models'
-import {
-  REVIEW_ENTITY_KINDS,
-  type ReviewEntityKind,
-} from '@/lib/copilot/review-sessions/types'
 import { loadReviewSessionForUser } from '@/lib/copilot/review-sessions/permissions'
+import { REVIEW_ENTITY_KINDS, type ReviewEntityKind } from '@/lib/copilot/review-sessions/types'
 import { COPILOT_SESSION_KIND } from '@/lib/copilot/session-scope'
 import { createLogger } from '@/lib/logs/console/logger'
 import { encodeSSE, SSE_HEADERS } from '@/lib/utils'

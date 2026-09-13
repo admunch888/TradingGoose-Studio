@@ -71,11 +71,7 @@ async function readFrames(response: Response) {
 }
 
 function startTurn(
-  params: {
-    contextEntityKind?: string
-    contextEntityId?: string
-    workspaceId?: string
-  } = {}
+  params: { contextEntityKind?: string; contextEntityId?: string; workspaceId?: string } = {}
 ) {
   return handleLocalCopilotChat({
     model: 'vllm/qwen3.8-fp8',

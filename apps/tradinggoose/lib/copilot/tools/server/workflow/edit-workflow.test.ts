@@ -484,11 +484,7 @@ describe('editWorkflowServerTool', () => {
       }
     )
 
-    expect(mockLoadWorkflowState).toHaveBeenCalledWith(
-      'wf-explicit',
-      expect.anything(),
-      'write'
-    )
+    expect(mockLoadWorkflowState).toHaveBeenCalledWith('wf-explicit', expect.anything(), 'write')
   })
 
   /**

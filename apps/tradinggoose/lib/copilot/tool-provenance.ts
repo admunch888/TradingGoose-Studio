@@ -1,5 +1,5 @@
 /**
- * Tool-execution provenance derived from a turn's chat contexts — the single
+ * Tool-execution provenance derived from a turn's chat contexts - the single
  * source of truth for "which entity is open" during a turn.
  *
  * The managed client derives it from the very contexts it is about to send
@@ -13,14 +13,10 @@
  * to be able to call it. `stores/copilot/store-provenance.ts` re-exports it
  * unchanged for the client, so both runtimes share one implementation.
  */
-import { DASHBOARD_LAYOUT_TOOL_NAMES } from '@/lib/copilot/registry'
 import type { ReviewEntityKind } from '@/lib/copilot/review-sessions/types'
 import { readCopilotWorkspaceEntityContext } from '@/lib/copilot/workspace-entities'
 import { normalizeOptionalString } from '@/lib/utils'
-import type {
-  ChatContext,
-  CopilotToolExecutionProvenance,
-} from '@/stores/copilot/types'
+import type { ChatContext, CopilotToolExecutionProvenance } from '@/stores/copilot/types'
 
 type ContextTurnProvenance = {
   workspaceId?: string
