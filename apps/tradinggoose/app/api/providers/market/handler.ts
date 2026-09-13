@@ -206,10 +206,27 @@ export async function handleMarketProviderRequest({
           details: normalized.details,
         },
       },
-      { status: normalized.status ?? 502 }
+      { status: resolveMarketErrorStatus(normalized.status) }
     )
   }
 }
+
+/**
+ * A market error is an HTTP response, so its status has to BE an HTTP status.
+ *
+ * A broker transport failure reaches us as `status: 0` (the shared request
+ * helper in providers/trading/portfolio-utils.ts reports "could not connect"
+ * that way) and `Response` rejects any status outside 200-599. Forwarding it
+ * threw `RangeError: init["status"] must be in the range of 200 to 599` OUT of
+ * this handler, so the market error body never reached the caller: a data chart
+ * displayed whatever the framework produced instead of the market reason the
+ * request failed. Every market error status in this codebase is 400-599; a
+ * value that is not usable as an HTTP status becomes 502 rather than escaping.
+ */
+const resolveMarketErrorStatus = (status?: number): number =>
+  typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
+    ? status
+    : 502
 
 const ENV_VAR_PATTERN = /\{\{([^}]+)\}\}/g
 
