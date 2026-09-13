@@ -31,7 +31,7 @@ const permissionMocks = vi.hoisted(() => ({
 }))
 
 const dbMocks = vi.hoisted(() => {
-  let rows: unknown[] = []
+  const rows: unknown[] = []
   const limit = vi.fn(() => Promise.resolve(rows))
   const whereResult = {
     limit,
@@ -392,9 +392,9 @@ describe('block -> tool boundary coerces parameters to the types the tool declar
       expect(coerceParametersToDeclaredTypes(tool, { o: '[1,2]' })).toEqual({ o: '[1,2]' })
       // A declared `string` keeps JSON-looking content as a string (e.g. MongoDB's
       // `query`/`sort` params and a custom tool's raw schema text).
-      expect(coerceParametersToDeclaredTypes(toolWith({ s: { type: 'string' } }), { s: '{"a":1}' })).toEqual(
-        { s: '{"a":1}' }
-      )
+      expect(
+        coerceParametersToDeclaredTypes(toolWith({ s: { type: 'string' } }), { s: '{"a":1}' })
+      ).toEqual({ s: '{"a":1}' })
     })
 
     it('never touches parameters the tool does not declare or a missing tool', () => {
