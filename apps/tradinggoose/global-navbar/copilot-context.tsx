@@ -103,3 +103,28 @@ export function GlobalCopilotDashboardContextPublisher({
 
   return <GlobalCopilotContextPublisher context={context} />
 }
+
+export function GlobalCopilotWorkflowContextPublisher({
+  workflowId,
+  workflowName,
+  workspaceId,
+}: {
+  workflowId: string | null
+  workflowName?: string | null
+  workspaceId: string
+}) {
+  const context = useMemo<ChatContext | null>(
+    () =>
+      workflowId
+        ? {
+            kind: 'current_workflow',
+            workflowId,
+            workspaceId,
+            label: workflowName?.trim() || workflowId,
+          }
+        : null,
+    [workflowId, workflowName, workspaceId]
+  )
+
+  return <GlobalCopilotContextPublisher context={context} />
+}

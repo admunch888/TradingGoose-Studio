@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Workflow } from 'lucide-react'
 import { LoadingAgent } from '@/components/ui/loading-agent'
+import { GlobalCopilotWorkflowContextPublisher } from '@/global-navbar/copilot-context'
 import {
   useWorkflowDropdownMessages,
   useWorkflowEditorMessages,
@@ -40,11 +41,17 @@ const WorkflowEditorWidgetBody = ({
   const dropdownCopy = useWorkflowDropdownMessages()
   const widgetKey = widget?.key ?? 'editor_workflow'
   const toolbarScopeId = readWorkflowToolbarScopeId(widgetKey, panelId)
-  const { resolvedWorkflowId, hasLoadedWorkflows, loadError, isLoading, workflowIds } =
-    useWorkflowWidgetState({
-      workspaceId,
-      params,
-    })
+  const {
+    resolvedWorkflowId,
+    resolvedWorkflowName,
+    hasLoadedWorkflows,
+    loadError,
+    isLoading,
+    workflowIds,
+  } = useWorkflowWidgetState({
+    workspaceId,
+    params,
+  })
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null)
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
     setContainerElement((prev) => {
@@ -134,6 +141,11 @@ const WorkflowEditorWidgetBody = ({
 
   return (
     <div ref={setContainerRef} className='relative flex h-full w-full overflow-hidden '>
+      <GlobalCopilotWorkflowContextPublisher
+        workflowId={resolvedWorkflowId}
+        workflowName={resolvedWorkflowName}
+        workspaceId={workspaceId}
+      />
       <WorkflowUIConfigProvider value={WORKFLOW_WIDGET_UI_CONFIG}>
         <WorkflowEditorApp
           workspaceId={workspaceId}

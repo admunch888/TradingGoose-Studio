@@ -646,6 +646,7 @@ const ChatContextSchema = z
       'watchlist',
       'dashboard_layout',
       'current_dashboard_layout',
+      'current_workflow',
       'blocks',
       'logs',
       'current_logs',
@@ -706,6 +707,12 @@ const ChatContextSchema = z
       issue.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'current_monitor contexts require monitorId and workspaceId',
+      })
+    }
+    if (context.kind === 'current_workflow' && (!context.workflowId || !context.workspaceId)) {
+      issue.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'current_workflow contexts require workflowId and workspaceId',
       })
     }
 

@@ -67,6 +67,26 @@ describe('buildTurnProvenanceFromContexts', () => {
     })
   })
 
+  it('derives workflow scope from the workflow the editor has open', () => {
+    expect(
+      buildTurnProvenanceFromContexts(
+        [
+          {
+            kind: 'current_workflow',
+            workflowId: 'workflow-current',
+            workspaceId: 'workspace-editor',
+            label: 'Alpha',
+          },
+        ],
+        'workspace-live'
+      )
+    ).toEqual({
+      contextEntityKind: 'workflow',
+      contextEntityId: 'workflow-current',
+      workspaceId: 'workspace-live',
+    })
+  })
+
   it('keeps an attached entity scope while dashboard tools use the current dashboard scope', () => {
     const provenance = buildTurnProvenanceFromContexts(
       [

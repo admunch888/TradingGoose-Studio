@@ -49,7 +49,9 @@ function getCopilotWorkspaceEntityKindFromContext(
       ? ENTITY_KIND_KNOWLEDGE_BASE
       : context.kind === 'current_dashboard_layout'
         ? ENTITY_KIND_DASHBOARD_LAYOUT
-        : context.kind
+        : context.kind === 'current_workflow'
+          ? ENTITY_KIND_WORKFLOW
+          : context.kind
 
   return isCopilotWorkspaceEntityMentionOption(rawKind) ? rawKind : null
 }
@@ -77,6 +79,7 @@ export function readCopilotWorkspaceEntityContext(
 function getCopilotWorkspaceEntityIdFromContext(context: ChatContext): string | null {
   switch (context.kind) {
     case 'workflow':
+    case 'current_workflow':
       return normalizeOptionalString(context.workflowId) ?? null
     case 'skill':
       return normalizeOptionalString(context.skillId) ?? null

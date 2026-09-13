@@ -516,6 +516,79 @@ describe('Copilot Chat POST Generic Sessions', () => {
     )
   })
 
+  it('accepts the workflow editor current_workflow context and forwards it to copilot', async () => {
+    const workflowContext = {
+      kind: 'current_workflow',
+      workflowId: 'workflow-1',
+      workspaceId: 'workspace-1',
+      label: 'Alpha',
+    }
+    mockProcessContextsServer.mockResolvedValue([
+      {
+        type: 'current_workflow',
+        tag: '@workflow-1',
+        content: '{"entityId":"workflow-1"}',
+      },
+    ])
+
+    const request = createMockRequest('POST', {
+      message: 'Set the Historical Data block provider to ibkr',
+      reviewSessionId: 'review-session-1',
+      stream: false,
+      contexts: [workflowContext],
+    })
+
+    const { POST } = await import('@/app/api/copilot/chat/route')
+    const response = await POST(request)
+
+    expect(response.status).toBe(200)
+    expect(mockProcessContextsServer).toHaveBeenCalledWith(
+      [workflowContext],
+      'collaborator-user',
+      'Set the Historical Data block provider to ibkr',
+      'workspace-1',
+      { signal: expect.any(AbortSignal) }
+    )
+    expect(mockProxyCopilotRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: '/api/copilot',
+        body: expect.objectContaining({
+          context: [
+            {
+              type: 'current_workflow',
+              tag: '@workflow-1',
+              content: '{"entityId":"workflow-1"}',
+            },
+          ],
+        }),
+      })
+    )
+  })
+
+  it('rejects a current_workflow context that carries no workflow id', async () => {
+    const request = createMockRequest('POST', {
+      message: 'Edit the open workflow',
+      reviewSessionId: 'review-session-1',
+      stream: false,
+      contexts: [
+        {
+          kind: 'current_workflow',
+          workspaceId: 'workspace-1',
+          label: 'Alpha',
+        },
+      ],
+    })
+
+    const { POST } = await import('@/app/api/copilot/chat/route')
+    const response = await POST(request)
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ error: 'Invalid request data' })
+    )
+    expect(mockProcessContextsServer).not.toHaveBeenCalled()
+  })
+
   it('rejects a request workspace that differs from the existing chat workspace', async () => {
     const request = createMockRequest('POST', {
       message: 'Read this monitor',
