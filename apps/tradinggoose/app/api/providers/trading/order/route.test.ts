@@ -875,7 +875,9 @@ describe('Trading provider order route', () => {
     const response = await POST(createProviderOrderRequest('tradier', undefined, idempotencyKey))
 
     expect(response.status).toBe(502)
-    await expect(response.json()).resolves.toEqual({ error: 'Broker request failed' })
+    await expect(response.json()).resolves.toEqual({
+      error: 'Broker request failed for tradier: Broker request failed with status 500',
+    })
     expect(mockRecordOrderHistory).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId,
@@ -971,5 +973,133 @@ describe('Trading provider order route', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1)
     expect(mockRecordOrderHistory).toHaveBeenCalledTimes(1)
     expect(mockUpdateOrderHistoryResult).toHaveBeenCalledTimes(1)
+  })
+
+  // An order that fails must answer with an HTTP status the caller can read.
+  // `Response` throws `RangeError: init["status"] must be in the range of 200 to
+  // 599` for anything outside that range, and the throw happens inside the
+  // handler, so the broker's error body never reaches the caller and the operator
+  // cannot tell whether the order was rejected, never sent, or sent and lost.
+  //
+  // The tests above call vi.resetModules(), so the route under test holds its own
+  // copy of these error classes; build the errors from the live registry or the
+  // route will not recognise them.
+  const liveTradingError = async (message: string, status: number) => {
+    const { TradingServiceError: LiveTradingServiceError } = await import('@/lib/trading/errors')
+    return new LiveTradingServiceError(message, status)
+  }
+
+  const liveBrokerError = async (input: {
+    message: string
+    providerId: string
+    status: number
+    url: string
+  }) => {
+    const { TradingBrokerRequestError: LiveTradingBrokerRequestError } = await import(
+      '@/providers/trading/portfolio-utils'
+    )
+    return new LiveTradingBrokerRequestError(input)
+  }
+
+  it('answers a broker transport failure at submission with a body that names the provider', async () => {
+    const transportMessage = 'Unable to connect. Is the computer able to access the url?'
+    mockFetch.mockRejectedValue(new TypeError(transportMessage))
+
+    const { POST } = await import('@/app/api/providers/trading/order/route')
+    const response = await POST(createProviderOrderRequest('alpaca'))
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error: `Broker request failed for alpaca: ${transportMessage}`,
+    })
+  })
+
+  it('answers a broker transport failure raised before submission with a 502, not a 400', async () => {
+    // Account discovery talks to the broker before the order is built, so a
+    // refused connection there reaches the route unwrapped.
+    mockListPortfolioIdentities.mockRejectedValue(
+      await liveBrokerError({
+        message: 'Unable to connect. Is the computer able to access the url?',
+        providerId: 'tradier',
+        status: 0,
+        url: 'https://api.tradier.com/v1/accounts',
+      })
+    )
+
+    const { POST } = await import('@/app/api/providers/trading/order/route')
+    const response = await POST(createProviderOrderRequest('tradier'))
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error:
+        'Broker request failed for tradier: Unable to connect. Is the computer able to access the url?',
+    })
+  })
+
+  it('answers a trading-layer status that is not an HTTP status with a valid 502', async () => {
+    // A transport failure is reported as status 0 (providers/trading/portfolio-utils.ts)
+    // and the trading layer forwards whatever status it holds. Passing that value
+    // into NextResponse used to throw the RangeError straight out of the route.
+    mockResolveOrderHistoryContext.mockRejectedValueOnce(
+      await liveTradingError('Broker request failed for alpaca: socket hang up', 0)
+    )
+
+    const { POST } = await import('@/app/api/providers/trading/order/route')
+    const response = await POST(createProviderOrderRequest('alpaca'))
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error: 'Broker request failed for alpaca: socket hang up',
+    })
+  })
+
+  it('passes a genuine broker status through unchanged', async () => {
+    mockListPortfolioIdentities.mockRejectedValueOnce(
+      await liveBrokerError({
+        message: 'Broker request failed with status 422',
+        providerId: 'alpaca',
+        status: 422,
+        url: 'https://api.alpaca.markets/v2/accounts',
+      })
+    )
+
+    const { POST } = await import('@/app/api/providers/trading/order/route')
+    const response = await POST(createProviderOrderRequest('alpaca'))
+
+    expect(response.status).toBe(422)
+    await expect(response.json()).resolves.toEqual({
+      error: 'Broker request failed for alpaca: Broker request failed with status 422',
+    })
+  })
+
+  it.each([401, 403, 404, 429, 500])(
+    'keeps the broker-reported HTTP status %i',
+    async (brokerStatus) => {
+      mockListPortfolioIdentities.mockRejectedValueOnce(
+        await liveBrokerError({
+          message: `Broker request failed with status ${brokerStatus}`,
+          providerId: 'alpaca',
+          status: brokerStatus,
+          url: 'https://api.alpaca.markets/v2/accounts',
+        })
+      )
+
+      const { POST } = await import('@/app/api/providers/trading/order/route')
+      const response = await POST(createProviderOrderRequest('alpaca'))
+
+      expect(response.status).toBe(brokerStatus)
+    }
+  )
+
+  it('keeps a genuine broker status forwarded by the trading layer', async () => {
+    mockResolveOrderHistoryContext.mockRejectedValueOnce(
+      await liveTradingError('Insufficient buying power', 422)
+    )
+
+    const { POST } = await import('@/app/api/providers/trading/order/route')
+    const response = await POST(createProviderOrderRequest('alpaca'))
+
+    expect(response.status).toBe(422)
+    await expect(response.json()).resolves.toEqual({ error: 'Insufficient buying power' })
   })
 })

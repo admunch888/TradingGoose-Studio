@@ -486,7 +486,14 @@ export async function submitTradingOrder({
           })
         }
         if (error instanceof TradingBrokerRequestError) {
-          throw new TradingServiceError('Broker request failed', 502)
+          // Name the provider and repeat the broker's own message: "Broker request
+          // failed" left the operator unable to tell a rejected order from a broker
+          // that was never reached. The status stays 502 - the failure is upstream
+          // of the app, and the order route's client reads the body, not the code.
+          throw new TradingServiceError(
+            `Broker request failed for ${baseContext.providerId}: ${error.message}`,
+            502
+          )
         }
         throw new TradingServiceError(
           error instanceof Error ? error.message : 'Order submission failed'

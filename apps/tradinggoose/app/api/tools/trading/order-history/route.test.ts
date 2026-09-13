@@ -4,6 +4,7 @@
 
 import { NextRequest } from 'next/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { TradingServiceError } from '@/lib/trading/errors'
 
 const mocks = vi.hoisted(() => {
   const selectQueue: unknown[][] = []
@@ -61,6 +62,18 @@ vi.mock('@/lib/utils', () => ({
   generateRequestId: vi.fn(() => 'request-1'),
 }))
 
+// The real implementation stays in charge; this handle only lets one test hand
+// the route the error shape it has to survive.
+vi.mock('@/lib/trading/order-history', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/trading/order-history')>()
+  return {
+    ...actual,
+    listTradingOrderHistory: vi.fn((...args: Parameters<typeof actual.listTradingOrderHistory>) =>
+      actual.listTradingOrderHistory(...args)
+    ),
+  }
+})
+
 describe('order history support route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -113,6 +126,24 @@ describe('order history support route', () => {
         ],
         workspaceId: 'workspace-1',
       },
+    })
+  })
+
+  it('answers a trading error carrying a status that is not an HTTP status with a 502', async () => {
+    const orderHistory = await import('@/lib/trading/order-history')
+    vi.mocked(orderHistory.listTradingOrderHistory).mockRejectedValueOnce(
+      new TradingServiceError('Broker request failed for alpaca: Unable to connect', 0)
+    )
+    const { GET } = await import('./route')
+
+    const response = await GET(
+      new NextRequest('http://localhost/api/tools/trading/order-history?workspaceId=workspace-1')
+    )
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      success: false,
+      error: { message: 'Broker request failed for alpaca: Unable to connect' },
     })
   })
 })

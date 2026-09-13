@@ -3,9 +3,10 @@ import { z } from 'zod'
 import { AuthType, checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
 import { ListingIdentitySchema, ListingResolvedSchema } from '@/lib/listing/identity'
 import { createTradingRequestId } from '@/lib/trading/context'
-import { isTradingServiceError } from '@/lib/trading/errors'
+import { isTradingServiceError, resolveTradingErrorStatus } from '@/lib/trading/errors'
 import type { TradingOrderSubmitRequest } from '@/lib/trading/order-types'
 import { submitTradingOrder } from '@/lib/trading/orders'
+import { TradingBrokerRequestError } from '@/providers/trading/portfolio-utils'
 
 const positiveNumberSchema = z.number().positive().finite()
 const nonEmptyStringSchema = z.string().trim().min(1)
@@ -94,7 +95,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response)
   } catch (error) {
     if (isTradingServiceError(error)) {
-      return errorResponse(error.message, error.status)
+      // error.status is whatever the trading layer reported, which is a broker
+      // status for broker failures and 0 for a transport failure - a value that
+      // cannot be sent as an HTTP status. resolveTradingErrorStatus keeps every
+      // real 400-599 status and answers 502 for the rest.
+      return errorResponse(error.message, resolveTradingErrorStatus(error.status))
+    }
+    if (error instanceof TradingBrokerRequestError) {
+      // Broker failures raised before submission (account discovery, listing
+      // resolution) reach the route unwrapped. Naming the provider and repeating
+      // the broker's own message is the difference between "the order was
+      // rejected" and "we never reached the broker" for whoever reads this.
+      return errorResponse(
+        `Broker request failed for ${error.providerId}: ${error.message}`,
+        resolveTradingErrorStatus(error.status)
+      )
     }
     return errorResponse(error instanceof Error ? error.message : 'Order submission failed')
   }

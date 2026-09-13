@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
 import { createLogger } from '@/lib/logs/console/logger'
-import { isTradingServiceError } from '@/lib/trading/errors'
+import { isTradingServiceError, resolveTradingErrorStatus } from '@/lib/trading/errors'
 import { listTradingOrderHistory } from '@/lib/trading/order-history'
 import { generateRequestId } from '@/lib/utils'
 
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     if (isTradingServiceError(error)) {
       return NextResponse.json(
         { success: false, error: { message: error.message } },
-        { status: error.status }
+        { status: resolveTradingErrorStatus(error.status) }
       )
     }
     logger.error(`[${requestId}] Failed to fetch order history`, { error })
