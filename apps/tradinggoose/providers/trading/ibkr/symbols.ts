@@ -58,25 +58,128 @@ const normalizeConidKeyPart = (value?: string | null): string => {
 }
 
 /**
- * `STK:AAPL:NASDAQ:USD:-` - sec type, symbol, exchange (or the market code that
- * stands in for it), quote currency and contract month.
+ * Futures contract months as the exchanges name them inside a symbol: one
+ * letter, mapped to the three-letter month a secdef section lists its
+ * `months` in (`DEC25`).
+ *
+ * F JAN  G FEB  H MAR  J APR  K MAY  M JUN  N JUL  Q AUG  U SEP  V OCT
+ * X NOV  Z DEC
+ */
+const IBKR_FUTURES_MONTH_NAMES: Record<string, string> = {
+  F: 'JAN',
+  G: 'FEB',
+  H: 'MAR',
+  J: 'APR',
+  K: 'MAY',
+  M: 'JUN',
+  N: 'JUL',
+  Q: 'AUG',
+  U: 'SEP',
+  V: 'OCT',
+  X: 'NOV',
+  Z: 'DEC',
+}
+
+/**
+ * The trailing contract month of a catalogue futures symbol, anchored at the
+ * end and requiring a root in front of it: `MESZ25` is `MES` + `Z25`,
+ * `ESZ5` is `ES` + `Z5` and `MESZ2025` is `MES` + `Z2025`.
+ *
+ * A three-digit trailing number is deliberately not matched: nothing observed
+ * writes a year that way, and guessing which end is the year is how the wrong
+ * contract gets resolved to.
+ */
+const IBKR_FUTURES_CONTRACT_MONTH = new RegExp(
+  `^(.+?)([${Object.keys(IBKR_FUTURES_MONTH_NAMES).join('')}])(\\d{4}|\\d{1,2})$`
+)
+
+export interface IbkrFuturesContractMonth {
+  /** The symbol without its contract month. A catalogue marker is kept. */
+  root: string
+  /** The contract month in the `MMMYY` form a section's `months` uses. */
+  expiry: string
+}
+
+/**
+ * A two-digit year is already the year as the section's `months` writes it, so
+ * it passes through; a four-digit year is shortened to those two digits. A
+ * SINGLE digit (`ESZ5`) is expanded against the decade the current year is in,
+ * so `5` is 2025 in the 2020s. That is the one real ambiguity - one digit
+ * cannot tell 2025 from 2035 - and this rule reads a digit below the current
+ * year's last digit as the current decade as well, so `Z4` in 2026 is 2024
+ * rather than 2034. The catalogue observed live emits the two-digit form.
+ */
+const expandFuturesYearDigits = (digits: string, now: Date): string => {
+  if (digits.length === 2) return digits
+  if (digits.length === 4) return digits.slice(-2)
+  const decade = Math.floor(now.getUTCFullYear() / 10) * 10
+  return String(decade + Number(digits)).slice(-2)
+}
+
+/**
+ * The contract month a catalogue futures symbol carries, or null when it
+ * carries none.
+ *
+ * The listing catalogue names a futures contract by root + month (`MESZ25`
+ * for the December 2025 Micro E-mini S&P), while IBKR's contract search only
+ * knows the ROOT: asking it for `MESZ25` matches no section at all, which is
+ * the live failure. The month is not lost, it is a second question -
+ * resolveIbkrConidFromApi searches the root and lets the section's `months`
+ * answer it, exactly as it already did for a caller that supplied an expiry.
+ *
+ * Only futures symbols are parsed. The restriction is what keeps every other
+ * ticker intact: a trailing `<month letter><digits>` is part of the symbol
+ * for anything that is not a futures contract month.
+ */
+export const parseIbkrFuturesContractMonth = (
+  symbol: string,
+  assetClass?: AssetClass | null,
+  now: Date = new Date()
+): IbkrFuturesContractMonth | null => {
+  if (resolveIbkrConidSpec(assetClass) !== 'FUT') {
+    return null
+  }
+  const match = IBKR_FUTURES_CONTRACT_MONTH.exec(symbol.trim().toUpperCase())
+  if (!match) {
+    return null
+  }
+  const [, root, monthLetter, yearDigits] = match
+  const month = IBKR_FUTURES_MONTH_NAMES[monthLetter]
+  return month ? { root, expiry: `${month}${expandFuturesYearDigits(yearDigits, now)}` } : null
+}
+
+/**
+ * `STK:AAPL:NASDAQ:USD:-` / `FUT:MES:CME:USD:DEC25` - sec type, symbol,
+ * exchange (or the market code that stands in for it), quote currency and
+ * contract month.
  *
  * Every dimension is written even when the caller does not have it, so one
  * caller always builds the same key for the same listing. `STK:AAPL` and
  * `STK:AAPL:NASDAQ:USD:-` would otherwise be two entries for one contract, and
  * the synchronous order-path read would miss the entry market data just wrote.
+ *
+ * A contract-month symbol is keyed as the ROOT it resolves to plus that month,
+ * so `MESZ25` shares one entry with (`MES`, `DEC25`) instead of opening a
+ * second entry for a symbol the search can no longer be asked about. That is
+ * what keeps both ends in agreement: the market path writes from the catalogue
+ * symbol, and the order path has nothing but that symbol to read it back with.
+ * A month stated in the context wins over the one in the symbol - both ends
+ * read the same context, so both land on the same key either way.
  */
 export const buildIbkrConidCacheKey = (
   symbol: string,
   assetClass?: AssetClass | null,
   context?: IbkrConidListingContext | null
-): string =>
-  [
-    `${resolveIbkrConidSpec(assetClass)}:${symbol.trim().toUpperCase()}`,
+): string => {
+  const normalizedSymbol = symbol.trim().toUpperCase()
+  const contractMonth = parseIbkrFuturesContractMonth(normalizedSymbol, assetClass)
+  return [
+    `${resolveIbkrConidSpec(assetClass)}:${contractMonth?.root ?? normalizedSymbol}`,
     normalizeConidKeyPart(context?.exchange ?? context?.marketCode),
     normalizeConidKeyPart(context?.currency),
-    normalizeConidKeyPart(context?.expiry),
+    normalizeConidKeyPart(context?.expiry ?? contractMonth?.expiry),
   ].join(':')
+}
 
 /**
  * The venue tokens a caller's context can be recognised by. IBKR's own venue
@@ -92,27 +195,38 @@ export const ibkrListingExchangeTokens = (context?: IbkrConidListingContext | nu
 }
 
 /**
- * The listings catalogue is not IBKR's vocabulary. A futures contract arrives
- * with a marker glued to the symbol - observed BOTH as `F*MES` and as `FMES`
- * with quote USD, for a contract the operator searched for as `MES` - while
- * IBKR's own contract search wants the bare symbol.
+ * The symbol forms to try against IBKR's contract search, in order.
  *
- * So for FUTURES the marked form is tried FIRST and the stripped form second.
- * The order matters and the restriction matters:
- *  - a leading `F` is a legitimate ticker elsewhere (`F` is Ford), so nothing is
- *    stripped for other asset classes;
- *  - a real futures symbol can itself start with F (FDAX, FESX), so the marked
- *    form must be attempted first and stripping only a fallback - never the
- *    other way round, and never when the first attempt errors for a reason that
- *    is not "no match".
+ * Two catalogue conventions break the symbol IBKR is asked for, and both are
+ * futures-only:
+ *  - a marker glued in front of the root - observed BOTH as `F*MES` and as
+ *    `FMES` with quote USD, for a contract the operator searched for as `MES`;
+ *  - a contract month glued on the end (`MESZ25`), which is how the listing
+ *    dropdown supplies a specific expiry.
+ *
+ * The contract month comes off FIRST and the marker SECOND. One is a suffix and
+ * the other a prefix, so neither can hide the other, and stripping the suffix
+ * first leaves the marked form the marker logic already handles: a symbol
+ * carrying both (`FMESZ25`) resolves through the same two candidates `FMES`
+ * does. The verbatim contract-month form is not offered at all - `symbol=MESZ25`
+ * is the request that failed live, because the endpoint matches roots and
+ * answers the month from the section's `months`.
+ *
+ * The order and the restriction matter equally: a leading `F` is a legitimate
+ * ticker elsewhere (`F` is Ford), so nothing is stripped for other asset
+ * classes; a real futures symbol can itself start with F (FDAX, FESX), so the
+ * marked form must be attempted first and stripping only a fallback - never the
+ * other way round, and never when the first attempt errors for a reason that is
+ * not "no match".
  */
 export const ibkrSymbolCandidates = (symbol: string, assetClass?: AssetClass | null): string[] => {
   const normalized = symbol.trim().toUpperCase()
   if (resolveIbkrConidSpec(assetClass) !== 'FUT') {
     return [normalized]
   }
-  const stripped = normalized.replace(/^F\*/, '').replace(/^F(?=[A-Z])/, '')
-  return stripped && stripped !== normalized ? [normalized, stripped] : [normalized]
+  const base = parseIbkrFuturesContractMonth(normalized, assetClass)?.root ?? normalized
+  const stripped = base.replace(/^F\*/, '').replace(/^F(?=[A-Z])/, '')
+  return stripped && stripped !== base ? [base, stripped] : [base]
 }
 
 interface SecDefSection {
@@ -195,6 +309,10 @@ export async function resolveIbkrConidFromApi({
   }
 
   const conidSpec = resolveIbkrConidSpec(assetClass)
+  // A catalogue symbol can carry its contract month (`MESZ25`). It is split off
+  // here so the key is the root plus the month (see buildIbkrConidCacheKey) and
+  // the search asks for the root (see ibkrSymbolCandidates).
+  const contractMonth = parseIbkrFuturesContractMonth(normalizedSymbol, assetClass)
   const cacheKey = buildIbkrConidCacheKey(normalizedSymbol, assetClass, context)
   const cachedConid = getCachedIbkrConid(cacheKey)
   if (cachedConid !== undefined) {
@@ -210,7 +328,32 @@ export async function resolveIbkrConidFromApi({
   }
 
   const requestedExchanges = ibkrListingExchangeTokens(context)
-  const requestedExpiry = context?.expiry ? [normalizeListingToken(context.expiry)] : []
+
+  /**
+   * The contract month a section is selected by. An explicit one from the
+   * caller is authoritative. Otherwise a contract-month symbol supplies it -
+   * the only way a market-data caller has one today, because the catalogue
+   * hands the expiry over glued to the symbol rather than as a field, and
+   * without it the search would answer with whichever section came back first.
+   *
+   * A caller that states both, and states them differently, is sending a
+   * contract month that is not the one it named in the symbol; that is an
+   * upstream disagreement worth a log line, but the explicit month decides,
+   * because it is the more specific instruction.
+   */
+  const explicitExpiry = context?.expiry ? normalizeListingToken(context.expiry) : ''
+  const requestedExpiry = explicitExpiry
+    ? [explicitExpiry]
+    : contractMonth
+      ? [contractMonth.expiry]
+      : []
+  if (explicitExpiry && contractMonth && explicitExpiry !== contractMonth.expiry) {
+    logger.warn('IBKR requested expiry disagrees with the contract month in the symbol', {
+      symbol: normalizedSymbol,
+      symbolExpiry: contractMonth.expiry,
+      requestedExpiry: explicitExpiry,
+    })
+  }
 
   // Sec types live under `sections` on the real payload; the flat `secType`
   // field is kept for older shapes. A row matching no section is skipped.
@@ -302,6 +445,11 @@ export async function resolveIbkrConidFromApi({
 /**
  * Synchronous conid lookup against the in-memory cache.
  * See resolveIbkrConidFromApi for how the cache is seeded.
+ *
+ * The key is built from the same inputs the seeding call had, which is why a
+ * contract-month symbol works here without this function ever seeing an expiry:
+ * buildIbkrConidCacheKey derives the month from the symbol, so a catalogue
+ * symbol the caller holds (`MESZ25`) reads the entry its own lookup wrote.
  */
 export function resolveIbkrConid({
   symbol,
