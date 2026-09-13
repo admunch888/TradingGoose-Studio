@@ -48,6 +48,25 @@ def test_request_rejects_future_timestamp_before_last_bar():
         ForecastRequest.model_validate(data)
 
 
+def test_request_accepts_camel_case_listing_from_app():
+    data = request_data()
+    data["listing"] = {"listingId": "listing-1", "listingType": "stock"}
+
+    request = ForecastRequest.model_validate(data)
+
+    assert request.listing.listing_id == "listing-1"
+    assert request.listing.listing_type == "stock"
+
+
+def test_response_listing_serializes_as_camel_case():
+    request = ForecastRequest.model_validate(request_data())
+
+    assert request.listing.model_dump(by_alias=True) == {
+        "listingId": "listing-1",
+        "listingType": "stock",
+    }
+
+
 def test_request_rejects_unknown_fields():
     data = request_data()
     data["modelUrl"] = "http://attacker.invalid/model"
