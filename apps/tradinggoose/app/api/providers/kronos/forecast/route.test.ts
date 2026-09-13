@@ -272,4 +272,26 @@ describe('kronos forecast route', () => {
     expect(response.status).toBe(400)
     expect(mocks.callKronosForecast).not.toHaveBeenCalled()
   })
+
+  /**
+   * The wire shape that produced the live failure on a podman deployment: the stored
+   * `short-input` value reaches the route as a string, and the tool dispatch boundary
+   * (tools/index.ts -> coerceParametersToDeclaredTypes) is what turns it into a number.
+   * When it cannot be coerced the route must keep reporting the same error.
+   */
+  it('rejects a stored horizonBars string with the schema error shape from the live failure', async () => {
+    const response = await POST(buildRequest(buildBlockPayload({ horizonBars: '12' })))
+    const payload = (await response.json()) as { error: string; details: unknown[] }
+
+    expect(response.status).toBe(400)
+    expect(payload.error).toBe('Invalid request data')
+    expect(payload.details).toEqual([
+      expect.objectContaining({
+        code: 'invalid_type',
+        path: ['horizonBars'],
+        message: expect.stringMatching(/expected number, received string/i),
+      }),
+    ])
+    expect(mocks.callKronosForecast).not.toHaveBeenCalled()
+  })
 })

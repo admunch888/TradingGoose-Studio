@@ -153,6 +153,114 @@ function formatParameterNameForError(paramName: string): string {
 }
 
 /**
+ * Coerces parameters to the types the tool declares.
+ *
+ * Block inputs are stored editor values: a `short-input` with `inputType: 'number'`
+ * is stored as a *string* (`inputType` is a UI hint - lib/workflows/subblock-values.ts
+ * copies sub-block values verbatim). A block's `tools.config.params` transform may type
+ * them, but it is not the only way into a tool and `GenericBlockHandler` discards the
+ * whole transform if it throws, so the declared tool parameter type is the contract the
+ * boundary has to enforce - before validation and dispatch.
+ *
+ * Rules:
+ *  - `number`: numeric strings become numbers; a blank string becomes `undefined` (an
+ *    empty optional input must stay absent rather than become 0/NaN); a value that is not
+ *    a finite number is left untouched so the existing validation reports it.
+ *  - `boolean`: 'true'/'false'/'1'/'0' (and 1/0) become booleans; anything else is left
+ *    untouched.
+ *  - `json`/`object`/`array`: JSON strings are parsed (only when the parsed value has the
+ *    declared shape); a string that does not parse is left untouched.
+ *  - `string` and every other declared type: never coerced.
+ *  - `undefined`, `null` and parameters the tool does not declare: left untouched.
+ */
+export function coerceParametersToDeclaredTypes<P extends Record<string, any>>(
+  tool: ToolConfig | undefined,
+  params: P
+): P {
+  if (!tool?.params) return params
+
+  const coerced: Record<string, any> = { ...params }
+
+  for (const [paramName, paramConfig] of Object.entries(tool.params)) {
+    if (!Object.hasOwn(coerced, paramName)) continue
+
+    const value = coerced[paramName]
+    if (value === undefined || value === null) continue
+
+    switch (paramConfig.type) {
+      case 'number':
+        coerced[paramName] = coerceNumberValue(value)
+        break
+      case 'boolean':
+        coerced[paramName] = coerceBooleanValue(value)
+        break
+      case 'json':
+        coerced[paramName] = coerceJsonValue(value)
+        break
+      case 'object':
+        coerced[paramName] = coerceJsonValue(value, 'object')
+        break
+      case 'array':
+        coerced[paramName] = coerceJsonValue(value, 'array')
+        break
+      default:
+        // Strings (and any other declared type) are never coerced.
+        break
+    }
+  }
+
+  return coerced as P
+}
+
+const isBlankString = (value: unknown): boolean => typeof value === 'string' && value.trim() === ''
+
+const coerceNumberValue = (value: unknown): unknown => {
+  if (typeof value === 'number') return value
+  if (typeof value !== 'string') return value
+  if (isBlankString(value)) return undefined
+
+  const numeric = Number(value)
+  // Let validation reject values that cannot be a finite number, with its own error.
+  return Number.isFinite(numeric) ? numeric : value
+}
+
+const coerceBooleanValue = (value: unknown): unknown => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (value === 1) return true
+    if (value === 0) return false
+    return value
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1') return true
+    if (normalized === 'false' || normalized === '0') return false
+  }
+  return value
+}
+
+const coerceJsonValue = (value: unknown, shape?: 'object' | 'array'): unknown => {
+  if (typeof value !== 'string' || isBlankString(value)) return value
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return value
+  }
+
+  if (shape === 'array' && !Array.isArray(parsed)) return value
+  if (
+    shape === 'object' &&
+    (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+  ) {
+    return value
+  }
+
+  return parsed
+}
+
+/**
  * Validates required parameters after LLM and user params have been merged
  * This is the final validation before tool execution - ensures all required
  * user-or-llm parameters are present after the merge process
