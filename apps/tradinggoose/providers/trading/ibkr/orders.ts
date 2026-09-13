@@ -1,7 +1,13 @@
+import { ListingResolvedSchema } from '@/lib/listing/identity'
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
 import { buildIbkrAccountUrl } from '@/providers/trading/ibkr/client'
 import { ibkrTradingProviderConfig } from '@/providers/trading/ibkr/config'
-import { resolveIbkrConid, resolveIbkrConidSpec } from '@/providers/trading/ibkr/symbols'
+import {
+  type IbkrConidListingContext,
+  resolveIbkrConid,
+  resolveIbkrConidFromApi,
+  resolveIbkrConidSpec,
+} from '@/providers/trading/ibkr/symbols'
 import type {
   TradingOrder,
   TradingOrderInput,
@@ -30,10 +36,14 @@ const IBKR_SIDE: Record<string, string> = {
   sell: 'SELL',
 }
 
-export const buildIbkrOrderRequest = (params: TradingOrderInput): TradingRequestConfig => {
-  const authHeaders = buildIbkrAuthHeaders({ accessToken: params.accessToken })
-
-  const symbol = listingIdentityToTradingSymbol(ibkrTradingProviderConfig, {
+/**
+ * The symbol an IBKR order is submitted for, derived exactly as
+ * buildIbkrOrderRequest derives it. prepareIbkrOrderRequest has to derive it
+ * the same way: the cache entry it seeds is only useful if the synchronous read
+ * in buildIbkrOrderRequest lands on the same key.
+ */
+export const resolveIbkrOrderSymbol = (params: TradingOrderInput): string =>
+  listingIdentityToTradingSymbol(ibkrTradingProviderConfig, {
     listing: params.listing,
     base: params.base,
     quote: params.quote,
@@ -42,6 +52,50 @@ export const buildIbkrOrderRequest = (params: TradingOrderInput): TradingRequest
     countryCode: params.countryCode,
     cityName: params.cityName,
   })
+
+/**
+ * Listing context for the conid cache key. The resolved listing is read first
+ * (the same precedence buildTradingListingContext uses), so an order and a
+ * market-data fetch for one listing key the same conid entry.
+ *
+ * No expiry/contract month is derivable here: nothing on TradingOrderInput or
+ * ListingResolved carries one, so the `expiry` dimension stays unset for
+ * futures until a caller has that data.
+ */
+export const resolveIbkrOrderListingContext = (
+  params: TradingOrderInput
+): IbkrConidListingContext => {
+  const parsed = ListingResolvedSchema.safeParse(params.listing)
+  const resolved = parsed.success ? parsed.data : null
+  return {
+    marketCode: resolved?.marketCode?.trim() || params.marketCode,
+    currency: resolved?.quote?.trim() || params.quote,
+  }
+}
+
+/**
+ * Seed the conid cache before the shared order pipeline builds its request.
+ *
+ * buildIbkrOrderRequest reads the contract identifier SYNCHRONOUSLY from a
+ * process-local cache that only market data used to write, so an order that was
+ * not preceded by an IBKR quote fetch in the same process - tool and block
+ * orders, or the quick order widget with its quote query disabled - used to
+ * fail before it reached the gateway. This is the write the synchronous read
+ * needs; the shared pipeline awaits it.
+ */
+export const prepareIbkrOrderRequest = async (params: TradingOrderInput): Promise<void> => {
+  await resolveIbkrConidFromApi({
+    symbol: resolveIbkrOrderSymbol(params),
+    assetClass: params.assetClass,
+    context: resolveIbkrOrderListingContext(params),
+    accessToken: params.accessToken,
+  })
+}
+
+export const buildIbkrOrderRequest = (params: TradingOrderInput): TradingRequestConfig => {
+  const authHeaders = buildIbkrAuthHeaders({ accessToken: params.accessToken })
+
+  const symbol = resolveIbkrOrderSymbol(params)
 
   const orderSizingMode = params.orderSizingMode ?? 'quantity'
   if (orderSizingMode === 'notional') {
@@ -67,6 +121,7 @@ export const buildIbkrOrderRequest = (params: TradingOrderInput): TradingRequest
   const { conid, conidSpec } = resolveIbkrConid({
     symbol,
     assetClass: params.assetClass,
+    context: resolveIbkrOrderListingContext(params),
   })
 
   const body: Record<string, any> = {

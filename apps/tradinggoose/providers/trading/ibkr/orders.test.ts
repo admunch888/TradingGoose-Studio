@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cacheIbkrConid, clearIbkrConidCache } from '@/providers/trading/ibkr/client'
-import { buildIbkrOrderRequest } from '@/providers/trading/ibkr/orders'
+import {
+  cacheIbkrConid,
+  clearIbkrConidCache,
+  getCachedIbkrConid,
+} from '@/providers/trading/ibkr/client'
+import { buildIbkrOrderRequest, prepareIbkrOrderRequest } from '@/providers/trading/ibkr/orders'
+import { buildIbkrConidCacheKey } from '@/providers/trading/ibkr/symbols'
+import { fetchBrokerJson } from '@/providers/trading/portfolio-utils'
+
+vi.mock('@/providers/trading/portfolio-utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/providers/trading/portfolio-utils')>()
+  return { ...actual, fetchBrokerJson: vi.fn() }
+})
 
 const baseParams = {
   listing: {
@@ -21,7 +32,7 @@ const baseParams = {
 describe('buildIbkrOrderRequest', () => {
   beforeEach(() => {
     clearIbkrConidCache()
-    cacheIbkrConid('STK:AAPL', 265598)
+    cacheIbkrConid(buildIbkrConidCacheKey('AAPL', 'stock'), 265598)
   })
 
   afterEach(() => {
@@ -191,5 +202,89 @@ describe('buildIbkrOrderRequest', () => {
       ip: '127.0.0.1',
       'Content-Type': 'application/json',
     })
+  })
+})
+
+/**
+ * The order pipeline reads the contract identifier synchronously, and the cache
+ * it reads is process-local. Nothing seeds it unless an IBKR market-data fetch
+ * happened to run first in the same process, so an order from a tool, a block,
+ * or the quick order widget with its quote query off used to fail with
+ * 'contract identifier not resolved' before it reached the gateway.
+ */
+describe('prepareIbkrOrderRequest', () => {
+  const aaplSecDefRows = [
+    { conid: '265598', symbol: 'AAPL', description: 'NASDAQ', sections: [{ secType: 'STK' }] },
+    { conid: '532640894', symbol: 'AAPL', description: 'TSE', sections: [{ secType: 'STK' }] },
+  ]
+
+  beforeEach(() => {
+    clearIbkrConidCache()
+    vi.mocked(fetchBrokerJson).mockReset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('seeds the conid cache so a cold-cache order can be built', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(aaplSecDefRows as never)
+
+    // Without the seed, buildIbkrOrderRequest throws 'contract identifier not
+    // resolved' and the order never reaches the gateway.
+    await prepareIbkrOrderRequest(baseParams)
+    const request = buildIbkrOrderRequest(baseParams)
+
+    expect(request.body).toMatchObject({ conid: 265598, side: 'BUY', quantity: '10' })
+  })
+
+  it('seeds the exact key the synchronous order path reads', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(aaplSecDefRows as never)
+
+    await prepareIbkrOrderRequest(baseParams)
+
+    expect(getCachedIbkrConid(buildIbkrConidCacheKey('AAPL', 'stock'))).toBe(265598)
+  })
+
+  it('scopes the seeded entry to the listing the order is for', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(aaplSecDefRows as never)
+    const listing = {
+      listingIdentity: {
+        listing_id: 'AAPL',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default' as const,
+      },
+      base: 'AAPL',
+      quote: 'USD',
+      marketCode: 'XNAS',
+    }
+
+    await prepareIbkrOrderRequest({ ...baseParams, listing })
+
+    expect(
+      getCachedIbkrConid(
+        buildIbkrConidCacheKey('AAPL', 'stock', { marketCode: 'XNAS', currency: 'USD' })
+      )
+    ).toBe(265598)
+    // The order built from the same params reads that entry without a second
+    // lookup: prepare and build agree on the key.
+    expect(buildIbkrOrderRequest({ ...baseParams, listing }).body).toMatchObject({
+      conid: 265598,
+    })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a warm cache alone', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    cacheIbkrConid(buildIbkrConidCacheKey('AAPL', 'stock'), 265598)
+
+    await prepareIbkrOrderRequest(baseParams)
+
+    expect(fetchBrokerJson).not.toHaveBeenCalled()
+    expect(buildIbkrOrderRequest(baseParams).body).toMatchObject({ conid: 265598 })
   })
 })

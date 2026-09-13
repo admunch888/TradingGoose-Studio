@@ -127,6 +127,9 @@ export async function fetchIbkrSeries(request: MarketSeriesRequest): Promise<Mar
   const { conid } = await resolveIbkrConidFromApi({
     symbol,
     assetClass: context.assetClass,
+    // Scopes the cache entry to this listing; without it one listing's conid
+    // served another's (see IbkrConidListingContext).
+    context: { marketCode: context.marketCode, currency: context.quote },
     accessToken,
   })
 

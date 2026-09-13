@@ -30,7 +30,7 @@ interface IbkrSnapshotRow {
 const toNumber = (value?: string | number): number | undefined => {
   if (value === undefined || value === null) return undefined
   // IBKR prefixes some values with markers such as 'C' (close) or 'H' (halted).
-  const cleaned = typeof value === 'string' ? value.replace(/[^0-9.\-]/g, '') : value
+  const cleaned = typeof value === 'string' ? value.replace(/[^0-9.-]/g, '') : value
   const parsed = typeof cleaned === 'number' ? cleaned : Number.parseFloat(cleaned)
   return Number.isFinite(parsed) ? parsed : undefined
 }
@@ -47,6 +47,9 @@ export async function fetchIbkrLiveSnapshot(
   const { conid } = await resolveIbkrConidFromApi({
     symbol,
     assetClass: context.assetClass,
+    // Scopes the cache entry to this listing; without it one listing's conid
+    // served another's (see IbkrConidListingContext).
+    context: { marketCode: context.marketCode, currency: context.quote },
     accessToken,
   })
 
