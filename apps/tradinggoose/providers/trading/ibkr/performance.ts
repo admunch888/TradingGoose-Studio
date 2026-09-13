@@ -1,11 +1,10 @@
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
-import { buildIbkrAccountUrl } from '@/providers/trading/ibkr/client'
+import { buildIbkrApiUrl } from '@/providers/trading/ibkr/client'
 import { ibkrTradingProviderConfig } from '@/providers/trading/ibkr/config'
 import {
   buildTradingPortfolioPerformance,
   createUnavailableTradingPortfolioPerformance,
   fetchBrokerJson,
-  toFiniteNumber,
 } from '@/providers/trading/portfolio-utils'
 import type {
   TradingPortfolioAccountContext,
@@ -14,58 +13,74 @@ import type {
   UnifiedTradingPortfolioPerformancePoint,
 } from '@/providers/trading/types'
 
-const IBKR_PERIOD_BY_WINDOW: Partial<
-  Record<TradingPortfolioPerformanceWindow, { period: string; periodType: string }>
-> = {
-  '1W': { period: 'W', periodType: '7D' },
-  '1M': { period: 'M', periodType: '1M' },
-  '3M': { period: 'M', periodType: '3M' },
-  YTD: { period: 'Y', periodType: 'YTD' },
-  '1Y': { period: 'Y', periodType: '1Y' },
-  MAX: { period: 'Y', periodType: '5Y' },
+/**
+ * POST /pa/performance periods: 1D, 7D, MTD, 1M, 3M, 6M, 12M and YTD. Nothing
+ * longer than 12M exists, so there is no MAX window.
+ */
+const IBKR_PERIOD_BY_WINDOW: Partial<Record<TradingPortfolioPerformanceWindow, string>> = {
+  '1W': '7D',
+  '1M': '1M',
+  '3M': '3M',
+  YTD: 'YTD',
+  '1Y': '12M',
 }
 
 const getIbkrSupportedPerformanceWindows = () =>
   ibkrTradingProviderConfig.capabilities?.portfolioDetail?.performanceWindows ?? []
 
-const normalizeIbkrTimestamp = (value: unknown): string | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date(value * 1000).toISOString()
+/** /pa/performance dates are `YYYYMMDD` strings. */
+const parseIbkrPerformanceDate = (value: unknown): string | null => {
+  const text =
+    typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : ''
+  if (!text) return null
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(text)
+  if (match) {
+    return `${match[1]}-${match[2]}-${match[3]}T00:00:00.000Z`
   }
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const numeric = Number(trimmed)
-  if (Number.isFinite(numeric)) {
-    return new Date(numeric * 1000).toISOString()
-  }
-  const parsed = Date.parse(trimmed)
+  const parsed = Date.parse(text)
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
 }
 
+const toEquity = (value: unknown): number | undefined => {
+  if (value === null || value === undefined || value === '') return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/** The NAV entry for the account, or the first (consolidated) one. */
+const selectIbkrNavEntry = (response: any, accountId?: string): Record<string, any> | undefined => {
+  const entries = Array.isArray(response?.nav?.data) ? response.nav.data : []
+  return entries.find((entry: any) => accountId && entry?.id === accountId) ?? entries[0]
+}
+
+/**
+ * Maps /pa/performance onto an equity series: `nav.dates[i]` is the date of
+ * `nav.data[].navs[i]`.
+ */
 export const normalizeIbkrPerformanceResponse = ({
   response,
   currency,
   window,
+  accountId,
 }: {
   response: any
   currency: string
   window: TradingPortfolioPerformanceWindow
+  accountId?: string
 }): UnifiedTradingPortfolioPerformance => {
-  const nav = response?.nav
-  const base = nav?.base
-  const rawData = Array.isArray(base?.data) ? base.data : []
-  const rawFreq = base?.freq ?? 'M'
+  const dates: unknown[] = Array.isArray(response?.nav?.dates) ? response.nav.dates : []
+  const navs: unknown[] = Array.isArray(selectIbkrNavEntry(response, accountId)?.navs)
+    ? (selectIbkrNavEntry(response, accountId)?.navs as unknown[])
+    : []
 
   const series: UnifiedTradingPortfolioPerformancePoint[] = []
-  for (const entry of rawData) {
-    if (!entry || typeof entry !== 'object') continue
-    const record = entry as Record<string, unknown>
-    const value = toFiniteNumber(record['$']) ?? toFiniteNumber(record.value)
-    const timestamp = normalizeIbkrTimestamp(record['t']) ?? normalizeIbkrTimestamp(record.t)
-    if (typeof value !== 'number' || !timestamp) continue
-    series.push({ timestamp, equity: value })
-  }
+  dates.forEach((date, index) => {
+    const timestamp = parseIbkrPerformanceDate(date)
+    const equity = toEquity(navs[index])
+    if (timestamp && typeof equity === 'number') {
+      series.push({ timestamp, equity })
+    }
+  })
 
   if (series.length === 0) {
     return createUnavailableTradingPortfolioPerformance({
@@ -89,7 +104,7 @@ export const normalizeIbkrPerformanceResponse = ({
     }
   }
 
-  const maxPoints = rawFreq === 'D' ? 2000 : 500
+  const maxPoints = response?.nav?.freq === 'D' ? 2000 : 500
   const limited = aggregated.slice(-maxPoints)
 
   return buildTradingPortfolioPerformance({
@@ -104,8 +119,8 @@ export const normalizeIbkrPerformanceResponse = ({
 export async function getIbkrTradingAccountPerformance(
   context: TradingPortfolioAccountContext & { window: TradingPortfolioPerformanceWindow }
 ): Promise<UnifiedTradingPortfolioPerformance> {
-  const mapping = IBKR_PERIOD_BY_WINDOW[context.window]
-  if (!mapping) {
+  const period = IBKR_PERIOD_BY_WINDOW[context.window]
+  if (!period) {
     return createUnavailableTradingPortfolioPerformance({
       window: context.window,
       supportedWindows: getIbkrSupportedPerformanceWindows(),
@@ -113,33 +128,29 @@ export async function getIbkrTradingAccountPerformance(
     })
   }
 
-  const searchParams = new URLSearchParams({
-    period: mapping.period,
-    periodType: mapping.periodType,
-    extended: 'false',
-  })
-
   const response = await fetchBrokerJson<any>({
     providerId: context.providerId,
-    url: `${buildIbkrAccountUrl(context.accountId, '/performance')}?${searchParams.toString()}`,
+    url: buildIbkrApiUrl('/pa/performance'),
     init: {
       method: 'POST',
       headers: {
         ...buildIbkrAuthHeaders({ accessToken: context.accessToken }),
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ acctIds: [context.accountId], period }),
     },
   })
 
+  const baseCurrency = selectIbkrNavEntry(response, context.accountId)?.baseCurrency
   const currency =
-    typeof response?.currency === 'string' && response.currency.trim()
-      ? response.currency.trim().toUpperCase()
+    typeof baseCurrency === 'string' && baseCurrency.trim()
+      ? baseCurrency.trim().toUpperCase()
       : 'USD'
 
   return normalizeIbkrPerformanceResponse({
     response,
     currency,
     window: context.window,
+    accountId: context.accountId,
   })
 }

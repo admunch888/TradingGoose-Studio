@@ -74,6 +74,21 @@ describe('normalizeIbkrPositions', () => {
     expect(positions).toHaveLength(0)
   })
 
+  it('skips options instead of labelling them futures', () => {
+    const positions = normalizeIbkrPositions(
+      [
+        {
+          ticker: 'AAPL',
+          assetClass: 'OPT',
+          position: 1,
+        },
+      ],
+      context
+    )
+
+    expect(positions).toHaveLength(0)
+  })
+
   it('handles non-array input as empty', () => {
     expect(normalizeIbkrPositions(null, context)).toEqual([])
     expect(normalizeIbkrPositions(undefined, context)).toEqual([])

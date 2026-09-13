@@ -1,5 +1,6 @@
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
 import { buildIbkrApiUrl } from '@/providers/trading/ibkr/client'
+import { ensureIbkrSession } from '@/providers/trading/ibkr/session'
 import type { PortfolioIdentity } from '@/providers/trading/portfolio-identity'
 import { fetchBrokerJson, toFiniteNumber } from '@/providers/trading/portfolio-utils'
 import type {
@@ -7,17 +8,6 @@ import type {
   UnifiedTradingAccountStatus,
   UnifiedTradingAccountType,
 } from '@/providers/trading/types'
-
-interface IbkrAccountsResponse {
-  accounts?: Array<{
-    id?: string
-    accountId?: string
-    accountTitle?: string
-    accountType?: string
-    currency?: string
-    status?: string
-  }>
-}
 
 export const mapIbkrAccountStatus = (value: unknown): UnifiedTradingAccountStatus => {
   if (typeof value !== 'string') return 'unknown'
@@ -38,6 +28,28 @@ export const mapIbkrAccountStatus = (value: unknown): UnifiedTradingAccountStatu
       return 'restricted'
     default:
       return 'unknown'
+  }
+}
+
+/**
+ * /portfolio/accounts `clearingStatus`: O open, P pending, N new, A abandoned,
+ * C closed, R rejected.
+ */
+export const mapIbkrClearingStatus = (value: unknown): UnifiedTradingAccountStatus | null => {
+  if (typeof value !== 'string') return null
+
+  switch (value.trim().toUpperCase()) {
+    case 'O':
+      return 'active'
+    case 'P':
+    case 'N':
+      return 'restricted'
+    case 'A':
+    case 'C':
+    case 'R':
+      return 'closed'
+    default:
+      return null
   }
 }
 
@@ -79,7 +91,7 @@ export const normalizeIbkrTradingAccount = (
     throw new Error('IBKR accounts response missing account id')
   }
 
-  const rawType = readText(account?.accountType)
+  const rawType = readText(account?.acctCustType) || readText(account?.accountType)
   const accountType = mapIbkrAccountType(rawType)
   const leverage = toFiniteNumber(account?.leverage)
   const type = typeof leverage === 'number' && leverage > 1 ? 'margin' : accountType
@@ -90,26 +102,37 @@ export const normalizeIbkrTradingAccount = (
     serviceId: context.serviceId,
     accountId: id,
     providerName: 'IBKR',
-    accountName: readText(account?.accountTitle) || `IBKR (${id})`,
+    accountName:
+      readText(account?.accountTitle) || readText(account?.accountAlias) || `IBKR (${id})`,
     accountType: type,
     baseCurrency: readText(account?.currency)?.toUpperCase() ?? 'USD',
-    accountStatus: mapIbkrAccountStatus(readText(account?.status)),
+    accountStatus:
+      mapIbkrClearingStatus(account?.clearingStatus) ??
+      mapIbkrAccountStatus(readText(account?.status)),
   }
 }
 
+/**
+ * Lists accounts from /portfolio/accounts. /iserver/accounts only lists bare
+ * account id strings, which this normalizer rejected, so no IBKR account ever
+ * resolved; /portfolio/accounts returns the account objects, and IBKR requires it
+ * to be read before any /portfolio/{accountId}/* endpoint anyway.
+ */
 export async function getIbkrTradingAccounts(
   context: TradingPortfolioBaseContext
 ): Promise<PortfolioIdentity[]> {
-  const response = await fetchBrokerJson<IbkrAccountsResponse>({
+  await ensureIbkrSession({ accessToken: context.accessToken })
+
+  const response = await fetchBrokerJson<unknown>({
     providerId: context.providerId,
-    url: buildIbkrApiUrl('/iserver/accounts'),
+    url: buildIbkrApiUrl('/portfolio/accounts'),
     init: {
       method: 'GET',
       headers: buildIbkrAuthHeaders({ accessToken: context.accessToken }),
     },
   })
 
-  const accounts = Array.isArray(response?.accounts) ? response.accounts : []
+  const accounts = Array.isArray(response) ? response : []
   const identities = accounts.map((account) => normalizeIbkrTradingAccount(account, context))
   if (identities.length === 0) {
     throw new Error('No IBKR accounts returned for the connected session')

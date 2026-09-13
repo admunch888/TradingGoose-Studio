@@ -112,6 +112,13 @@ export interface TradingProviderAdapter {
     params: TradingOrderDetailInput
   ) => Promise<TradingOrderDetailResult>
   normalizeOrder?: (data: any) => TradingOrder
+  /**
+   * Sends the built order request and returns the broker's final order payload.
+   * Providers whose submission takes more than one request implement it (IBKR
+   * answers order warnings through /iserver/reply before an order is placed);
+   * otherwise the shared pipeline sends the request as built.
+   */
+  submitOrder?: (request: TradingRequestConfig) => Promise<unknown>
 }
 
 export interface TradingProviderDefinition {

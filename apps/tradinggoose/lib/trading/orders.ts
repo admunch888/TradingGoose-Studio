@@ -445,16 +445,18 @@ export async function submitTradingOrder({
           timeInForce,
           orderSizingMode,
         })
-        rawOrder = await fetchBrokerJson<unknown>({
-          providerId: baseContext.providerId,
-          url: providerRequest.url,
-          init: {
-            method: providerRequest.method,
-            headers: providerRequest.headers,
-            body: toFetchBody(providerRequest.body),
-          },
-        })
         const provider = getTradingProviderAdapter(baseContext.providerId)
+        rawOrder = provider.submitOrder
+          ? await provider.submitOrder(providerRequest)
+          : await fetchBrokerJson<unknown>({
+              providerId: baseContext.providerId,
+              url: providerRequest.url,
+              init: {
+                method: providerRequest.method,
+                headers: providerRequest.headers,
+                body: toFetchBody(providerRequest.body),
+              },
+            })
         const providerOrder = provider.normalizeOrder
           ? provider.normalizeOrder(rawOrder)
           : ({ raw: rawOrder } as TradingOrder)

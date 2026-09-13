@@ -11,17 +11,26 @@ portfolio-state monitors, and configured order actions.
 
 <Callout type="info">
   The IBKR provider uses the Interactive Brokers <strong>Client Portal Web
-  API</strong> (REST/JSON). It expects an OAuth 2.0 access token and a base URL
-  for the API, which is normally served by a local <strong>IB Gateway</strong>
-  on port <code>5000</code>.
+  API</strong> (REST/JSON). Against a local <strong>Client Portal
+  Gateway</strong> (the default, port <code>5000</code>) requests ride the
+  session you open by logging in at the gateway in a browser, and no access
+  token is sent. Against the hosted API (<code>api.ibkr.com</code>) requests
+  carry an OAuth access token.
 </Callout>
 
 ## Prerequisites
 
-1. An Interactive Brokers account (paper or live) with the Client Portal Web
-   API enabled, and API access enabled in Account Settings → Settings → API.
-2. A reachable IB Gateway (or hosted Client Portal Web API endpoint). The
-   gateway must be running and authenticated for the account you want to use.
+1. An Interactive Brokers account (paper or live) with API access enabled in
+   Account Settings → Settings → API.
+2. A running Client Portal Gateway, logged in for the account you want to use,
+   or access to the hosted Client Portal Web API.
+
+<Callout type="warning">
+  The gateway serves HTTPS with a self-signed certificate by default, which the
+  app does not accept. Set <code>listenSsl: false</code> in the gateway's
+  <code>conf.yaml</code> (and use an <code>http://</code> base URL), or put a
+  proxy with a trusted certificate in front of it.
+</Callout>
 
 ## Configuration
 
@@ -30,37 +39,53 @@ Set these environment variables for the app:
 | Variable | Description | Default |
 | --- | --- | --- |
 | `IBKR_API_BASE_URL` | Base URL of the Client Portal Web API | `http://127.0.0.1:5000/v1/api` |
-| `IBKR_TOKEN_ENDPOINT` | OAuth2 token endpoint for the access token | `https://api.ibkr.com/v1/api/oauth2/token` |
-| `IBKR_API_IP` | IP header sent with requests (gateway allowlist) | `127.0.0.1` |
-
-For a local gateway, the default base URL works out of the box. For a hosted
-API (IBKR Web API Gateway), set `IBKR_API_BASE_URL` to the hosted endpoint.
+| `IBKR_TOKEN_ENDPOINT` | OAuth2 token endpoint (hosted API only) | `https://api.ibkr.com/v1/api/oauth2/token` |
+| `IBKR_API_IP` | IP header sent with hosted API requests | `127.0.0.1` |
+| `IBKR_ORDER_CONFIRM_MESSAGE_IDS` | Order warnings to confirm automatically (see below) | `o10151,o10152,o10288,o10331` |
 
 ## Connecting an account
 
 1. Open **Connections** in the workspace.
 2. Choose **IBKR Live** or **IBKR Paper**.
-3. Complete the OAuth flow with your IBKR credentials.
+3. Complete the connection flow.
 4. The connected account becomes available as a trading provider for order
    actions, portfolio detail, and portfolio-state monitors.
 
 ## Supported capabilities
 
 - **Asset classes**: stocks, ETFs, futures, currencies, indices, mutual funds
-- **Order types**: market, limit, stop, stop-limit, trailing stop
-- **Time in force**: day, GTC, IOC, FOK, GTD
+- **Order types**: market, limit, stop, stop-limit, trailing stop (by amount or percent)
+- **Time in force**: day, GTC, IOC
 - **Sizing**: quantity only
 - **Portfolio detail**: account summary, positions, cash balances, performance
+  (1W, 1M, 3M, YTD, 1Y)
 
-<Callout type="warning">
-  IBKR order submissions are asynchronous. A submitted order may still be
-  pending at the broker after the initial response; order status updates are
-  reflected in run history as they arrive from the gateway.
-</Callout>
+## Order confirmations
+
+IBKR holds some orders until a warning is answered - for example a reminder
+about market order risks, or a notice that the order's value exceeds a limit.
+TradingGoose confirms a warning only when every message id on it is listed in
+`IBKR_ORDER_CONFIRM_MESSAGE_IDS`. By default that is the order-type risk
+disclosures:
+
+| Id | Message |
+| --- | --- |
+| `o10151` | Risks of market orders |
+| `o10152` | Risks of stop orders once they become active |
+| `o10288` | Risks of market orders for crypto |
+| `o10331` | Stop order risks |
+
+Any other warning is declined, the order is not placed, and the run reports
+IBKR's message together with its id. To allow a warning, add its id to the
+variable (comma-separated), or suppress the message in IBKR. `*` confirms every
+warning and should only be used for accounts where that is acceptable; an empty
+value confirms none.
 
 ## Notes
 
-- The provider registers for a workspace only when the gateway is reachable
-  and an account has been connected through the OAuth flow.
+- IBKR only reports order status for the current brokerage session. Order
+  detail for an order placed in an earlier session is not available.
+- Order submissions are asynchronous. A submitted order may still be pending at
+  the broker after the initial response.
 - Paper and live environments are separate services; use the paper account for
   testing.
