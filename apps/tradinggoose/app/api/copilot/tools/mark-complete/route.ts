@@ -18,6 +18,7 @@ import {
 } from '@/lib/copilot/local-runtime/persistence'
 import { isCopilotLocalRuntimeModel } from '@/lib/copilot/local-runtime/runtime-models'
 import { loadReviewSessionForUser } from '@/lib/copilot/review-sessions/permissions'
+import { REVIEW_ENTITY_KINDS, type ReviewEntityKind } from '@/lib/copilot/review-sessions/types'
 import { COPILOT_SESSION_KIND } from '@/lib/copilot/session-scope'
 import { createLogger } from '@/lib/logs/console/logger'
 import { encodeSSE, SSE_HEADERS } from '@/lib/utils'
@@ -33,6 +34,34 @@ const MarkCompleteSchema = z.object({
   message: z.any().optional(),
   data: z.any().optional(),
 })
+
+/**
+ * Reads the entity provenance a local-runtime client may echo with its tool
+ * result. It uses the SAME field names the server-tool routes take
+ * (`contextEntityKind` / `contextEntityId`) and rides in the local-only `data`
+ * envelope, which is `z.any()` and already carries `local` / `reviewSessionId` -
+ * no new top-level body field. Anything malformed or absent is dropped so a tool
+ * keeps requiring an explicit id instead of being pointed at a guessed entity.
+ */
+function readLocalContinuationEntityContext(data: unknown): {
+  contextEntityKind?: ReviewEntityKind
+  contextEntityId?: string
+} {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {}
+  const record = data as Record<string, unknown>
+
+  const rawKind = record.contextEntityKind
+  const contextEntityKind =
+    typeof rawKind === 'string' && REVIEW_ENTITY_KINDS.includes(rawKind as ReviewEntityKind)
+      ? (rawKind as ReviewEntityKind)
+      : undefined
+  const rawId = record.contextEntityId
+  const contextEntityId =
+    typeof rawId === 'string' && rawId.trim().length > 0 ? rawId.trim() : undefined
+
+  if (!contextEntityKind || !contextEntityId) return {}
+  return { contextEntityKind, contextEntityId }
+}
 
 function createTurnStateStream(
   body: ReadableStream<Uint8Array>,
@@ -220,11 +249,22 @@ export async function POST(req: NextRequest) {
           data: parsed.data,
         })
 
+        const continuationEntityContext = readLocalContinuationEntityContext(parsed.data)
+
         const stream = await handleLocalCopilotContinuation({
           model: sessionModel,
           reviewSessionId,
           userId,
           requestId: tracker.requestId,
+          // A continuation carries no contexts of its own, so recover what the
+          // server already knows: the session's workspace. The entity provenance
+          // can only come from the client (the browser had it when it executed
+          // the client-only tool) - absent it, a tool requires an explicit id
+          // rather than being pointed at a guessed entity.
+          ...(typeof ownedSession?.workspaceId === 'string' && ownedSession.workspaceId
+            ? { workspaceId: ownedSession.workspaceId }
+            : {}),
+          ...continuationEntityContext,
           continuation: {
             toolCallId: parsed.id,
             toolName: parsed.name,

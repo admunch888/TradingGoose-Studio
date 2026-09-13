@@ -1,96 +1,19 @@
 'use client'
 
 import { DASHBOARD_LAYOUT_TOOL_NAMES } from '@/lib/copilot/registry'
-import type { ReviewEntityKind } from '@/lib/copilot/review-sessions/types'
-import { readCopilotWorkspaceEntityContext } from '@/lib/copilot/workspace-entities'
-import { normalizeOptionalString } from '@/lib/utils'
 import type {
-  ChatContext,
   CopilotMessage,
   CopilotToolCall,
   CopilotToolExecutionProvenance,
 } from '@/stores/copilot/types'
 
-type ContextTurnProvenance = {
-  workspaceId?: string
-  contextEntityKind?: ReviewEntityKind
-  contextEntityId?: string
-  ownerUserId?: string
-  explicit: boolean
-}
-
-function applyContextTurnProvenance(
-  provenance: CopilotToolExecutionProvenance,
-  context: ContextTurnProvenance
-): boolean {
-  const { explicit } = context
-  if (context.workspaceId && (explicit || !provenance.workspaceId)) {
-    provenance.workspaceId = context.workspaceId
-  }
-  if (
-    context.contextEntityKind &&
-    context.contextEntityKind !== 'dashboard_layout' &&
-    context.contextEntityId &&
-    !provenance.contextEntityId
-  ) {
-    provenance.contextEntityKind = context.contextEntityKind
-    provenance.contextEntityId = context.contextEntityId
-  }
-
-  return Boolean(context.workspaceId || context.contextEntityId)
-}
-
-function readDashboardLayoutContext(
-  context: ContextTurnProvenance
-): CopilotToolExecutionProvenance['dashboardLayoutContext'] | null {
-  if (context.contextEntityKind !== 'dashboard_layout') return null
-  if (!context.contextEntityId || !context.workspaceId || !context.ownerUserId) return null
-
-  return {
-    entityId: context.contextEntityId,
-    workspaceId: context.workspaceId,
-    ownerUserId: context.ownerUserId,
-  }
-}
-
-function getContextTurnProvenance(context: ChatContext): ContextTurnProvenance | null {
-  const entityContext = readCopilotWorkspaceEntityContext(context)
-  if (!entityContext) {
-    return null
-  }
-
-  return {
-    workspaceId: normalizeOptionalString(entityContext.workspaceId),
-    contextEntityKind: entityContext.entityKind,
-    contextEntityId: normalizeOptionalString(entityContext.entityId),
-    ownerUserId: normalizeOptionalString(entityContext.ownerUserId),
-    explicit: !entityContext.current,
-  }
-}
-
-export function buildTurnProvenanceFromContexts(
-  contexts: ChatContext[] | undefined,
-  workspaceId: string | null | undefined
-): CopilotToolExecutionProvenance | undefined {
-  const normalizedWorkspaceId = normalizeOptionalString(workspaceId)
-  const provenance: CopilotToolExecutionProvenance = {
-    ...(normalizedWorkspaceId ? { workspaceId: normalizedWorkspaceId } : {}),
-  }
-  let hasContext = !!normalizedWorkspaceId
-
-  for (const context of contexts ?? []) {
-    const entityContext = getContextTurnProvenance(context)
-    if (entityContext) {
-      const dashboardLayoutContext = readDashboardLayoutContext(entityContext)
-      if (dashboardLayoutContext && !provenance.dashboardLayoutContext) {
-        provenance.dashboardLayoutContext = dashboardLayoutContext
-      }
-      hasContext = applyContextTurnProvenance(provenance, entityContext) || hasContext
-    }
-  }
-
-  return hasContext ? provenance : undefined
-}
+/**
+ * Re-exported from `lib/copilot/tool-provenance` so the client store and the
+ * server-side local runtime share ONE implementation of "which entity is open"
+ * (the local runtime executes server tools in-process, so it derives the
+ * provenance from the same contexts the client sends).
+ */
+export { buildTurnProvenanceFromContexts } from '@/lib/copilot/tool-provenance'
 
 export function withPinnedToolExecutionProvenance(
   toolCall: CopilotToolCall,

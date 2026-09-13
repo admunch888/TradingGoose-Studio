@@ -7,6 +7,7 @@ import {
 } from '@/lib/copilot/context-limits'
 import { projectExecutionLogContext } from '@/lib/copilot/execution-log-context'
 import { CopilotTool } from '@/lib/copilot/registry'
+import { ENTITY_KIND_WORKFLOW } from '@/lib/copilot/review-sessions/types'
 import { requireCopilotEntityId } from '@/lib/copilot/tools/entity-target'
 import type {
   BaseServerTool,
@@ -17,7 +18,11 @@ import { createLogger } from '@/lib/logs/console/logger'
 import { buildWorkspaceAccessScope } from '@/lib/permissions/utils'
 
 interface ReadWorkflowLogsArgs {
-  entityId: string
+  /**
+   * Workflow (or exact execution-log) id. Optional: falls back to the open
+   * workflow in the execution context.
+   */
+  entityId?: string
   limit?: number
 }
 
@@ -33,7 +38,11 @@ export const readWorkflowLogsServerTool: BaseServerTool<ReadWorkflowLogsArgs, an
   async execute(rawArgs: ReadWorkflowLogsArgs, context?: ServerToolExecutionContext): Promise<any> {
     const logger = createLogger('ReadWorkflowLogsServerTool')
     const limit = clampWorkflowLogLimit(rawArgs?.limit)
-    const entityId = requireCopilotEntityId(rawArgs, { toolName: CopilotTool.read_workflow_logs })
+    const entityId = requireCopilotEntityId(rawArgs, {
+      toolName: CopilotTool.read_workflow_logs,
+      context,
+      entityKind: ENTITY_KIND_WORKFLOW,
+    })
     const userId = requireUserId(context)
 
     logger.info('Reading workflow logs', { entityId, limit })

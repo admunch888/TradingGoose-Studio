@@ -432,4 +432,96 @@ describe('editWorkflowServerTool', () => {
       )
     ).rejects.toThrow('Workflow graph Mermaid must not include TG_* metadata comments')
   })
+
+  /**
+   * The local runtime runs this tool in-process with the open workflow in the
+   * execution context (contextEntityKind/Id). A model that omits `entityId` must
+   * still edit THAT workflow - the reported symptom was a small local model
+   * being asked to discover the id with list_workflows and echo it back exactly.
+   */
+  it('targets the execution context workflow when the model omits entityId', async () => {
+    const result = await editWorkflowServerTool.execute(
+      {
+        entityDocument: graph([
+          'flowchart TD',
+          '  n1["Input Form<br/>id: input1<br/>type: input_trigger"]',
+          '  n2["Compute Indicators<br/>id: fn1<br/>type: function"]',
+          '  n1 --> n2',
+        ]),
+      },
+      {
+        userId: 'user-1',
+        accessLevel: 'full',
+        contextEntityKind: 'workflow',
+        contextEntityId: 'wf-open',
+      }
+    )
+
+    expect(mockLoadWorkflowState).toHaveBeenCalledWith(
+      'wf-open',
+      expect.objectContaining({ contextEntityId: 'wf-open' }),
+      'write'
+    )
+    expect(result.entityName).toBe('Strategy Workflow')
+  })
+
+  it('prefers an explicit entityId over the execution context workflow', async () => {
+    await editWorkflowServerTool.execute(
+      {
+        entityId: 'wf-explicit',
+        entityDocument: graph([
+          'flowchart TD',
+          '  n1["Input Form<br/>id: input1<br/>type: input_trigger"]',
+          '  n2["Compute Indicators<br/>id: fn1<br/>type: function"]',
+          '  n1 --> n2',
+        ]),
+      },
+      {
+        userId: 'user-1',
+        accessLevel: 'full',
+        contextEntityKind: 'workflow',
+        contextEntityId: 'wf-open',
+      }
+    )
+
+    expect(mockLoadWorkflowState).toHaveBeenCalledWith('wf-explicit', expect.anything(), 'write')
+  })
+
+  /**
+   * Safety case. With no context there is no target to fall back to, and
+   * guessing one ("the first workflow") would let the edit land on the WRONG
+   * workflow - so the pre-existing clear error has to survive.
+   */
+  it('still requires an entityId when the context carries no workflow', async () => {
+    await expect(
+      editWorkflowServerTool.execute(
+        {
+          entityDocument: graph([
+            'flowchart TD',
+            '  n1["Input Form<br/>id: input1<br/>type: input_trigger"]',
+          ]),
+        },
+        { userId: 'user-1', accessLevel: 'full' }
+      )
+    ).rejects.toThrow('entityId is required for edit_workflow')
+
+    await expect(
+      editWorkflowServerTool.execute(
+        {
+          entityDocument: graph([
+            'flowchart TD',
+            '  n1["Input Form<br/>id: input1<br/>type: input_trigger"]',
+          ]),
+        },
+        {
+          userId: 'user-1',
+          accessLevel: 'full',
+          contextEntityKind: 'watchlist',
+          contextEntityId: 'watchlist-1',
+        }
+      )
+    ).rejects.toThrow('entityId is required for edit_workflow')
+
+    expect(mockLoadWorkflowState).not.toHaveBeenCalled()
+  })
 })

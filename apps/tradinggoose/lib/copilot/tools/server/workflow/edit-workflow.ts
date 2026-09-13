@@ -1,3 +1,4 @@
+import { ENTITY_KIND_WORKFLOW } from '@/lib/copilot/review-sessions/types'
 import { requireCopilotEntityId } from '@/lib/copilot/tools/entity-target'
 import type {
   BaseServerTool,
@@ -24,7 +25,8 @@ import {
 } from './workflow-mutation-utils'
 
 interface EditWorkflowParams {
-  entityId: string
+  /** Optional: falls back to the open workflow in the execution context. */
+  entityId?: string
   entityDocument: string
   removedBlockIds?: string[]
 }
@@ -271,7 +273,11 @@ export const editWorkflowServerTool: BaseServerTool<EditWorkflowParams, any> = {
   async execute(params: EditWorkflowParams, context?: ServerToolExecutionContext): Promise<any> {
     const logger = createLogger('EditWorkflowServerTool')
     const { entityDocument, removedBlockIds } = params
-    const workflowId = requireCopilotEntityId(params, { toolName: 'edit_workflow' })
+    const workflowId = requireCopilotEntityId(params, {
+      toolName: 'edit_workflow',
+      context,
+      entityKind: ENTITY_KIND_WORKFLOW,
+    })
 
     if (!entityDocument || entityDocument.trim().length === 0) {
       throw new Error('entityDocument is required')

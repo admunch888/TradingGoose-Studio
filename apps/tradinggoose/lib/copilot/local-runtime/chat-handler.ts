@@ -34,6 +34,15 @@ export interface LocalChatHandlerParams {
   conversationId?: string
   workspaceId?: string
   userId: string
+  /**
+   * Tool-execution provenance for this turn, derived by the caller from the same
+   * contexts the client sent (lib/copilot/tool-provenance.ts - the managed
+   * client's source of truth). Server tools run in-process here, so this is the
+   * only way the open entity reaches them; when it is absent every tool keeps
+   * requiring an explicit id.
+   */
+  contextEntityKind?: string
+  contextEntityId?: string
   contexts?: Array<{ type: string; tag?: string; content: string }>
   fileContents?: Array<{ filename?: string; mediaType?: string; content?: string }>
   fileAttachments?: unknown
@@ -58,6 +67,16 @@ export interface LocalContinuationHandlerParams {
   reviewSessionId: string
   userId: string
   requestId: string
+  /**
+   * The continuing turn has no contexts of its own (the browser resumed it after
+   * a client-only tool), so the caller passes back whatever it can: the review
+   * session's workspace, and the provenance the client echoed alongside the tool
+   * result. Absent values stay absent - a tool then requires an explicit id
+   * rather than being pointed at a guessed entity.
+   */
+  workspaceId?: string
+  contextEntityKind?: string
+  contextEntityId?: string
   continuation: {
     toolCallId: string
     toolName: string
@@ -151,6 +170,13 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
             ctx: {
               userId: params.userId,
               accessLevel: 'full',
+              // The open entity, so edit_workflow / edit_workflow_block /
+              // read_workflow_logs resolve their target the way the managed
+              // runtime's tools do. Without it a local model had to discover a
+              // workflow id (list_workflows) and echo it back exactly - the
+              // two-step chain small local models drop.
+              ...(params.contextEntityKind ? { contextEntityKind: params.contextEntityKind } : {}),
+              ...(params.contextEntityId ? { contextEntityId: params.contextEntityId } : {}),
               ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
             },
             sink: {
@@ -274,6 +300,9 @@ export async function handleLocalCopilotContinuation(
             ctx: {
               userId: params.userId,
               accessLevel: 'full',
+              ...(params.contextEntityKind ? { contextEntityKind: params.contextEntityKind } : {}),
+              ...(params.contextEntityId ? { contextEntityId: params.contextEntityId } : {}),
+              ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
             },
             sink: {
               send: (payload: Record<string, unknown>) => {

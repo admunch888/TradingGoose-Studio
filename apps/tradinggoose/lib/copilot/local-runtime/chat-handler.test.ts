@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const capturedTurnCtx = vi.hoisted(() => ({ accessLevel: undefined as string | undefined }))
+const capturedTurnCtx = vi.hoisted(() => ({
+  accessLevel: undefined as string | undefined,
+  contextEntityKind: undefined as string | undefined,
+  contextEntityId: undefined as string | undefined,
+  workspaceId: undefined as string | undefined,
+}))
 
 vi.mock('@tradinggoose/db', () => {
   const rows: unknown[] = []
@@ -30,10 +35,18 @@ vi.mock('@tradinggoose/db', () => {
 // Drive the sink with the exact payloads agent.ts sends.
 vi.mock('@/lib/copilot/local-runtime/agent', () => ({
   runLocalCopilotTurn: async (params: {
-    ctx?: { accessLevel?: string }
+    ctx?: {
+      accessLevel?: string
+      contextEntityKind?: string
+      contextEntityId?: string
+      workspaceId?: string
+    }
     sink: { send: (payload: Record<string, unknown>) => void }
   }) => {
     capturedTurnCtx.accessLevel = params.ctx?.accessLevel
+    capturedTurnCtx.contextEntityKind = params.ctx?.contextEntityKind
+    capturedTurnCtx.contextEntityId = params.ctx?.contextEntityId
+    capturedTurnCtx.workspaceId = params.ctx?.workspaceId
     params.sink.send({
       event: 'response.output_text.delta',
       data: { item_id: 'local_assistant_text', delta: 'Hello' },
@@ -57,7 +70,9 @@ async function readFrames(response: Response) {
     .map((block) => JSON.parse(block.slice(6)) as Record<string, unknown>)
 }
 
-function startTurn() {
+function startTurn(
+  params: { contextEntityKind?: string; contextEntityId?: string; workspaceId?: string } = {}
+) {
   return handleLocalCopilotChat({
     model: 'vllm/qwen3.8-fp8',
     message: 'hello',
@@ -66,10 +81,18 @@ function startTurn() {
     reviewSessionId: 'session-1',
     userId: 'user-1',
     requestId: 'req-1',
+    ...params,
   })
 }
 
 describe('local copilot chat handler', () => {
+  beforeEach(() => {
+    capturedTurnCtx.accessLevel = undefined
+    capturedTurnCtx.contextEntityKind = undefined
+    capturedTurnCtx.contextEntityId = undefined
+    capturedTurnCtx.workspaceId = undefined
+  })
+
   it('returns headers that forbid transforming the stream', async () => {
     const response = await startTurn()
 
@@ -110,5 +133,39 @@ describe('local copilot chat handler', () => {
 
     const done = frames.find((frame) => frame.type === 'response.output_item.done')
     expect((done?.item as Record<string, unknown>)?.name).toBe('list_workflows')
+  })
+
+  /**
+   * The route derives the open entity from the request's contexts (the managed
+   * client's source of truth) and hands it to the turn; every ctx field has to
+   * land, or the in-process server tools cannot target it.
+   */
+  it('carries the turn entity context into the agent context', async () => {
+    await readFrames(
+      await startTurn({
+        contextEntityKind: 'workflow',
+        contextEntityId: 'wf-open',
+        workspaceId: 'workspace-1',
+      })
+    )
+
+    expect(capturedTurnCtx).toMatchObject({
+      accessLevel: 'full',
+      contextEntityKind: 'workflow',
+      contextEntityId: 'wf-open',
+      workspaceId: 'workspace-1',
+    })
+  })
+
+  /**
+   * Safety: a turn with no entity context must stay that way - no field may be
+   * fabricated, so the tools keep requiring an explicit id.
+   */
+  it('passes no entity context when the turn has none', async () => {
+    await readFrames(await startTurn({ workspaceId: 'workspace-1' }))
+
+    expect(capturedTurnCtx.contextEntityId).toBeUndefined()
+    expect(capturedTurnCtx.contextEntityKind).toBeUndefined()
+    expect(capturedTurnCtx.workspaceId).toBe('workspace-1')
   })
 })
