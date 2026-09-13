@@ -19,7 +19,7 @@ vi.mock('@/components/listing-selector/selector/resolve-request', () => ({
 const fetchListingsMock = vi.hoisted(() => vi.fn(async () => [] as ListingResolved[]))
 
 vi.mock('@/lib/listing/search', () => ({
-  fetchListings: (...args: unknown[]) => fetchListingsMock(...args),
+  fetchListings: fetchListingsMock,
 }))
 
 vi.mock('@/hooks/workflow/use-accessible-reference-prefixes', () => ({
