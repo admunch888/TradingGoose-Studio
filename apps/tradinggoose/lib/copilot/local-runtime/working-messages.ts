@@ -62,20 +62,32 @@ export function buildLocalWorkingMessages(params: {
 
   if (params.continuation) {
     const { toolCallId, toolName, status, message, data } = params.continuation
-    messages.push({
-      role: 'tool',
-      tool_call_id: toolCallId,
-      name: toolName,
-      content: truncate(
-        JSON.stringify({
-          ok: status >= 200 && status < 300,
-          status,
-          ...(message !== undefined ? { message } : {}),
-          ...(data !== undefined ? { data } : {}),
-        }),
-        200_000
-      ),
-    })
+    // The route persists the tool result (`persistLocalContinuation`) BEFORE it
+    // invokes the continuation, and the caller reloads the working history from
+    // that store — so the same result arrives both in `priorWorkingMessages` and
+    // as `continuation`. Pushing it again would send the model two role:'tool'
+    // messages sharing one tool_call_id (rejected by most OpenAI-compatible
+    // servers, and silently double-counted by the rest), so only add it when the
+    // history does not already carry that call.
+    const alreadyPersisted = messages.some(
+      (existing) => existing.role === 'tool' && existing.tool_call_id === toolCallId
+    )
+    if (!alreadyPersisted) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        name: toolName,
+        content: truncate(
+          JSON.stringify({
+            ok: status >= 200 && status < 300,
+            status,
+            ...(message !== undefined ? { message } : {}),
+            ...(data !== undefined ? { data } : {}),
+          }),
+          200_000
+        ),
+      })
+    }
     return trimLocalWorkingMessages(messages, {
       systemPrompt: params.systemPrompt,
       contextWindow: params.contextWindow ?? params.defaultContextWindow,
