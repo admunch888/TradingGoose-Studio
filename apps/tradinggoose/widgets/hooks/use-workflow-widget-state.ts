@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
+import { normalizeOptionalString } from '@/lib/utils'
 import { useEntityList } from '@/lib/yjs/use-entity-fields'
 import type { WidgetComponentProps } from '@/widgets/types'
 import { resolveEntityId, resolveEntityIdFromList } from '@/widgets/widget-contracts'
@@ -11,6 +12,7 @@ type UseWorkflowWidgetStateOptions = Pick<WidgetComponentProps, 'params'> & {
 
 type UseWorkflowWidgetStateResult = {
   resolvedWorkflowId: string | null
+  resolvedWorkflowName: string | null
   hasLoadedWorkflows: boolean
   loadError: 'unableToLoadWorkflows' | null
   isLoading: boolean
@@ -54,8 +56,16 @@ export const useWorkflowWidgetState = ({
 
   const loadError: 'unableToLoadWorkflows' | null = listError ? 'unableToLoadWorkflows' : null
 
+  const resolvedWorkflowName = useMemo(() => {
+    if (!resolvedWorkflowId) return null
+
+    const match = members.find((member) => member.entityId === resolvedWorkflowId)
+    return normalizeOptionalString(match?.entityName) ?? null
+  }, [members, resolvedWorkflowId])
+
   return {
     resolvedWorkflowId,
+    resolvedWorkflowName,
     hasLoadedWorkflows,
     loadError,
     isLoading: isListLoading && !hasWorkflowMembers,

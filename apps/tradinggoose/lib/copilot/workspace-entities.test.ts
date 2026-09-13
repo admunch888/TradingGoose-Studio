@@ -53,6 +53,21 @@ describe('workspace-entities', () => {
 
     expect(
       readCopilotWorkspaceEntityContext({
+        kind: 'current_workflow',
+        workflowId: 'workflow-current',
+        workspaceId: 'workspace-1',
+        label: 'Alpha',
+      })
+    ).toEqual({
+      entityKind: 'workflow',
+      entityId: 'workflow-current',
+      workspaceId: 'workspace-1',
+      ownerUserId: null,
+      current: true,
+    })
+
+    expect(
+      readCopilotWorkspaceEntityContext({
         kind: 'dashboard_layout',
         dashboardLayoutId: 'layout-1',
         workspaceId: 'workspace-1',

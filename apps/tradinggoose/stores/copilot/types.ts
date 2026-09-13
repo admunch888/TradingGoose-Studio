@@ -84,6 +84,12 @@ type WorkspaceEntityCurrentChatContext =
       ownerUserId: string
       label: string
     }
+  | {
+      kind: 'current_workflow'
+      workflowId: string
+      workspaceId: string
+      label: string
+    }
 
 type WorkspaceEntityChatContext =
   | WorkspaceEntityExplicitChatContext
