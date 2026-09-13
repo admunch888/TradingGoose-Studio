@@ -2,7 +2,7 @@ import { ChartBarIcon } from '@/components/icons/icons'
 import { LISTING_IDENTITY_VALUE_TYPE } from '@/lib/listing/identity'
 import type { BlockConfig, SubBlockConfig } from '@/blocks/types'
 import { AuthMode } from '@/blocks/types'
-import { requiredUserOnlyInput } from '@/blocks/utils'
+import { requiredUserOrLlmInput } from '@/blocks/utils'
 import {
   coerceMarketProviderParamValue,
   getMarketProviderParamCatalog,
@@ -414,9 +414,11 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
     },
   },
   inputs: {
-    // User-only so a workflow missing either fails serialization, before dispatch.
-    provider: requiredUserOnlyInput('string', 'Market provider id'),
-    listing: requiredUserOnlyInput(LISTING_IDENTITY_VALUE_TYPE, 'Structured listing payload'),
+    // Required, so a workflow missing either fails serialization before dispatch - but
+    // visible to the LLM, so the local CoPilot can fill them ("use AAPL"). The serializer
+    // validates required inputs regardless of visibility, so requiredness is unchanged.
+    provider: requiredUserOrLlmInput('string', 'Market provider id'),
+    listing: requiredUserOrLlmInput(LISTING_IDENTITY_VALUE_TYPE, 'Structured listing payload'),
     interval: { type: 'string', description: 'Series interval/timeframe' },
     window: {
       type: 'json',

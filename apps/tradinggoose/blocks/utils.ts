@@ -36,6 +36,20 @@ export const requiredUserOnlyInput = (type: ParamType, description: string): Par
   visibility: 'user-only',
 })
 
+/**
+ * A required input that the user *or* the local CoPilot/LLM may fill.
+ *
+ * Requiredness (the workflow is incorrect without a value) and visibility (who may
+ * supply it) are independent questions: the pre-dispatch validator enforces the
+ * former for every required input, so `user-or-llm` does not weaken it.
+ */
+export const requiredUserOrLlmInput = (type: ParamType, description: string): ParamConfig => ({
+  type,
+  description,
+  required: true,
+  visibility: 'user-or-llm',
+})
+
 export const buildInputsFromToolParams = (
   params: ToolConfig['params'],
   options: ToolInputOptions = {}

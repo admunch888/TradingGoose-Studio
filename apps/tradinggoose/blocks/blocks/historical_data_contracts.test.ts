@@ -200,3 +200,98 @@ describe('historical data block -> pre-dispatch validation', () => {
     expect(body.windows).toEqual([{ mode: 'bars', barCount: 500 }])
   })
 })
+
+/**
+ * Required-ness and visibility are separate questions:
+ *   - required: the workflow is incorrect without a value (enforced pre-dispatch)
+ *   - visibility: who may supply it in the editor (user-only vs user-or-llm)
+ *
+ * Marking `provider`/`listing` user-only made them unfillable by the local CoPilot
+ * ("use AAPL"). Restoring user-or-llm keeps them required - the serializer validates
+ * required inputs regardless of visibility - so a blank one still fails loudly.
+ */
+describe('historical data block -> required vs LLM-fillable inputs', () => {
+  it('keeps provider and listing required but LLM-fillable', () => {
+    expect(HistoricalDataBlock.inputs?.provider).toMatchObject({
+      required: true,
+      visibility: 'user-or-llm',
+    })
+    expect(HistoricalDataBlock.inputs?.listing).toMatchObject({
+      required: true,
+      visibility: 'user-or-llm',
+    })
+  })
+
+  it('serializes a listing the CoPilot filled', () => {
+    const serializer = new Serializer()
+    const copilotListing = { ...LISTING, listing_id: 'MSFT' }
+
+    const workflow = serializer.serializeWorkflow(
+      {
+        'historical-data-1': buildBlock({
+          provider: { value: 'ibkr' },
+          listing: { value: copilotListing },
+        }),
+      },
+      [],
+      {},
+      undefined,
+      true
+    )
+
+    const dispatched = HistoricalDataBlock.tools.config!.params!(
+      workflow.blocks[0].config.params as any
+    )
+
+    expect(dispatched.listing).toEqual(copilotListing)
+  })
+
+  it('still fails pre-dispatch when the LLM-fillable listing is blank', () => {
+    const serializer = new Serializer()
+
+    // Precondition: this test only proves the visibility-independent validation if
+    // the input really is visible to the LLM.
+    expect(HistoricalDataBlock.inputs?.listing?.visibility).toBe('user-or-llm')
+
+    expect(() =>
+      serializer.serializeWorkflow(
+        {
+          'historical-data-1': buildBlock({
+            provider: { value: 'ibkr' },
+            listing: { value: null },
+          }),
+        },
+        [],
+        {},
+        undefined,
+        true
+      )
+    ).toThrow('Historical Data is missing required fields: Listing')
+  })
+
+  it('keeps the PR #30 window/interval defaults through the validation path', () => {
+    const serializer = new Serializer()
+
+    const workflow = serializer.serializeWorkflow(
+      {
+        'historical-data-1': buildBlock({
+          provider: { value: 'ibkr' },
+          listing: { value: LISTING },
+        }),
+      },
+      [],
+      {},
+      undefined,
+      true
+    )
+
+    const dispatched = HistoricalDataBlock.tools.config!.params!(
+      workflow.blocks[0].config.params as any
+    )
+
+    expect(dispatched.window).toEqual({ mode: 'bars', barCount: 500 })
+    expect(dispatched.interval).toBe(
+      resolveDefaultSeriesInterval(getMarketSeriesCapabilities('ibkr'))
+    )
+  })
+})
