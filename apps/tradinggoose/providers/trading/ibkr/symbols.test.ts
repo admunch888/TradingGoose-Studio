@@ -3,6 +3,7 @@ import { cacheIbkrConid, clearIbkrConidCache } from '@/providers/trading/ibkr/cl
 import {
   buildIbkrConidCacheKey,
   ibkrSymbolCandidates,
+  parseIbkrFuturesContractMonth,
   resolveIbkrConid,
   resolveIbkrConidFromApi,
   resolveIbkrConidSpec,
@@ -59,6 +60,35 @@ const mesFutureRows = [
   },
 ]
 
+/**
+ * One futures root across several contract months, in the shape the live
+ * secdef/search answered with. `MESZ25` is the Micro E-mini S&P the market
+ * listing dropdown supplies for December 2025: the search endpoint only knows
+ * the ROOT `MES`, and a section's `months` - `MMMYY`, sometimes several per
+ * row - is the only thing that tells contract months apart. A month none of
+ * these rows offers must fail rather than fall back to the first FUT section.
+ */
+const mesContractMonthRows = [
+  {
+    conid: '466221142',
+    symbol: 'MES',
+    description: 'CME',
+    sections: [{ secType: 'FUT', exchange: 'CME', months: 'SEP26' }],
+  },
+  {
+    conid: '515151515',
+    symbol: 'MES',
+    description: 'CME',
+    sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC25,MAR26' }],
+  },
+  {
+    conid: '606060606',
+    symbol: 'MES',
+    description: 'CME',
+    sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC26' }],
+  },
+]
+
 describe('resolveIbkrConidSpec', () => {
   it('maps asset classes to IBKR security types', () => {
     expect(resolveIbkrConidSpec('stock')).toBe('STK')
@@ -88,6 +118,33 @@ describe('buildIbkrConidCacheKey', () => {
     )
   })
 
+  it('keys a contract-month symbol as the root it resolves to plus that month', () => {
+    // `MESZ25` and `MES` with the December contract are one listing, so they
+    // have to build one key: the synchronous order path only ever sees the
+    // symbol (see resolveIbkrConid), and it must find what the async lookup
+    // wrote. The root on its own stays its own entry.
+    expect(buildIbkrConidCacheKey('mesz25', 'future')).toBe('FUT:MES:-:-:DEC25')
+    expect(buildIbkrConidCacheKey('MESZ25', 'future')).toBe(
+      buildIbkrConidCacheKey('MES', 'future', { expiry: 'DEC25' })
+    )
+    expect(buildIbkrConidCacheKey('MESZ25', 'future')).not.toBe(
+      buildIbkrConidCacheKey('MES', 'future')
+    )
+    // Two contract months of one root are still two entries.
+    expect(buildIbkrConidCacheKey('MESZ25', 'future')).not.toBe(
+      buildIbkrConidCacheKey('MESZ26', 'future')
+    )
+    // A month the caller states explicitly wins over the one the symbol
+    // carries, on the write and on the read alike.
+    expect(buildIbkrConidCacheKey('MESZ25', 'future', { expiry: 'SEP26' })).toBe(
+      'FUT:MES:-:-:SEP26'
+    )
+    // A catalogue marker keeps the entry it has always had (see #15).
+    expect(buildIbkrConidCacheKey('FMESZ25', 'future')).toBe('FUT:FMES:-:-:DEC25')
+    // Nothing is derived for a non-futures listing, whatever the symbol ends in.
+    expect(buildIbkrConidCacheKey('MESZ25', 'stock')).toBe('STK:MESZ25:-:-:-')
+  })
+
   it('never lets two listings of one symbol share an entry', () => {
     const nasdaq = buildIbkrConidCacheKey('AAPL', 'stock', { exchange: 'NASDAQ', currency: 'USD' })
     const tse = buildIbkrConidCacheKey('AAPL', 'stock', { exchange: 'TSE', currency: 'CAD' })
@@ -100,6 +157,90 @@ describe('buildIbkrConidCacheKey', () => {
     const december = buildIbkrConidCacheKey('MES', 'future', { exchange: 'CME', expiry: 'DEC26' })
 
     expect(september).not.toBe(december)
+  })
+})
+
+describe('parseIbkrFuturesContractMonth', () => {
+  // Pinned: a one-digit year is expanded against the decade the catalogue is
+  // in, so the clock is part of the answer.
+  const now = new Date('2026-09-13T00:00:00Z')
+
+  it('reads the trailing contract month of a catalogue futures symbol', () => {
+    // What the live dropdown supplied for a December 2025 Micro E-mini S&P.
+    expect(parseIbkrFuturesContractMonth('MESZ25', 'future', now)).toEqual({
+      root: 'MES',
+      expiry: 'DEC25',
+    })
+    expect(parseIbkrFuturesContractMonth('ESZ5', 'future', now)).toEqual({
+      root: 'ES',
+      expiry: 'DEC25',
+    })
+    // A four-digit year is the same month; three digits are not a year.
+    expect(parseIbkrFuturesContractMonth('MESZ2025', 'future', now)).toEqual({
+      root: 'MES',
+      expiry: 'DEC25',
+    })
+    expect(parseIbkrFuturesContractMonth('MESZ025', 'future', now)).toBeNull()
+  })
+
+  it('maps every futures month code to the month IBKR lists', () => {
+    const months: Record<string, string> = {
+      F: 'JAN',
+      G: 'FEB',
+      H: 'MAR',
+      J: 'APR',
+      K: 'MAY',
+      M: 'JUN',
+      N: 'JUL',
+      Q: 'AUG',
+      U: 'SEP',
+      V: 'OCT',
+      X: 'NOV',
+      Z: 'DEC',
+    }
+    for (const [code, month] of Object.entries(months)) {
+      expect(parseIbkrFuturesContractMonth(`MES${code}26`, 'future', now)?.expiry).toBe(
+        `${month}26`
+      )
+    }
+  })
+
+  it('expands a one-digit year against the decade the catalogue is in', () => {
+    // Futures symbols truncate the year (`ESZ5`), so `5` is 2025 in the 2020s
+    // and `8` is 2028. A digit below the current year's last digit therefore
+    // reads as the current decade, which is the one ambiguity left.
+    expect(parseIbkrFuturesContractMonth('MESZ5', 'future', now)?.expiry).toBe('DEC25')
+    expect(parseIbkrFuturesContractMonth('MESZ8', 'future', now)?.expiry).toBe('DEC28')
+  })
+
+  it('leaves a root, a marked symbol and a non-month code alone', () => {
+    expect(parseIbkrFuturesContractMonth('MES', 'future', now)).toBeNull()
+    expect(parseIbkrFuturesContractMonth('FMES', 'future', now)).toBeNull()
+    // `Y` is not a futures month code, so `MESY25` is not a contract month.
+    expect(parseIbkrFuturesContractMonth('MESY25', 'future', now)).toBeNull()
+    // A month code with no root in front of it is not a contract month either.
+    expect(parseIbkrFuturesContractMonth('Z25', 'future', now)).toBeNull()
+  })
+
+  it('keeps the catalogue marker in front of the root', () => {
+    // The month is a suffix and the marker a prefix, so one cannot hide the
+    // other: strip the month, and the existing marker handling still applies.
+    expect(parseIbkrFuturesContractMonth('FMESZ25', 'future', now)).toEqual({
+      root: 'FMES',
+      expiry: 'DEC25',
+    })
+    expect(parseIbkrFuturesContractMonth('F*MESZ25', 'future', now)).toEqual({
+      root: 'F*MES',
+      expiry: 'DEC25',
+    })
+  })
+
+  it('never parses a contract month out of a non-futures symbol', () => {
+    // Stripping is only safe where a FUT lookup was asked for; elsewhere the
+    // trailing characters are part of the ticker.
+    expect(parseIbkrFuturesContractMonth('MESZ25', 'stock', now)).toBeNull()
+    expect(parseIbkrFuturesContractMonth('MESZ25', undefined, now)).toBeNull()
+    expect(parseIbkrFuturesContractMonth('MESZ25', 'etf', now)).toBeNull()
   })
 })
 
@@ -162,6 +303,28 @@ describe('ibkrSymbolCandidates', () => {
     expect(ibkrSymbolCandidates('F', 'stock')).toEqual(['F'])
     expect(ibkrSymbolCandidates('FMES', 'stock')).toEqual(['FMES'])
     expect(ibkrSymbolCandidates('F', undefined)).toEqual(['F'])
+  })
+
+  it('searches the root of a contract-month symbol, not the contract symbol', () => {
+    // The live failure asked secdef/search for `MESZ25`, which matches no
+    // section; the endpoint only knows the root, and the section's `months`
+    // is what selects the contract. The contract symbol itself is deliberately
+    // not tried: it resolves to nothing and would only cost a request.
+    expect(ibkrSymbolCandidates('MESZ25', 'future')).toEqual(['MES'])
+    expect(ibkrSymbolCandidates('ESZ5', 'future')).toEqual(['ES'])
+  })
+
+  it('handles a symbol that carries both a marker and a month', () => {
+    // Suffix first: the month comes off, and the marked form that is left goes
+    // through the existing marker handling unchanged.
+    expect(ibkrSymbolCandidates('FMESZ25', 'future')).toEqual(['FMES', 'MES'])
+    expect(ibkrSymbolCandidates('F*MESZ25', 'future')).toEqual(['F*MES', 'MES'])
+  })
+
+  it('leaves a non-futures symbol that ends in a month code alone', () => {
+    expect(ibkrSymbolCandidates('MESZ25', 'stock')).toEqual(['MESZ25'])
+    expect(ibkrSymbolCandidates('MESZ25', undefined)).toEqual(['MESZ25'])
+    expect(ibkrSymbolCandidates('MESY25', 'future')).toEqual(['MESY25'])
   })
 })
 
@@ -347,6 +510,117 @@ describe('resolveIbkrConidFromApi', () => {
     expect(marked.conid).toBe(466221142)
     expect(bare.conid).toBe(515151515)
     expect(fetchBrokerJson).toHaveBeenCalledTimes(3)
+  })
+
+  it('searches the root symbol and picks the contract month the listing offers', async () => {
+    // The live failure, in one test: the dropdown supplied `MESZ25`, the old
+    // code sent `symbol=MESZ25` verbatim, secdef/search matched nothing and
+    // every market request for a December 2025 contract failed. The request
+    // has to go out for the ROOT, and the section's `months` picks the month.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'MESZ25',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    const requestedUrl = vi.mocked(fetchBrokerJson).mock.calls[0]?.[0]?.url ?? ''
+    expect(requestedUrl).toContain('symbol=MES')
+    expect(requestedUrl).toContain('secType=FUT')
+    expect(requestedUrl).not.toContain('MESZ25')
+    // DEC25 is the SECOND month in its row's list, and the row that carries it
+    // is not the first row the search returned.
+    expect(resolution).toEqual({ conid: 515151515, conidSpec: 'FUT' })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('picks the requested contract month when the listing offers several', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+
+    const december26 = await resolveIbkrConidFromApi({
+      symbol: 'MESZ26',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+    const september26 = await resolveIbkrConidFromApi({
+      symbol: 'MESU26',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    // DEC26 is the third row; SEP26 the first. Neither may fall back to
+    // "whichever row came back first".
+    expect(december26.conid).toBe(606060606)
+    expect(september26.conid).toBe(466221142)
+  })
+
+  it('keeps the root symbol resolvable for callers that pass only the root', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    // No contract month requested, so no expiry filter: the first row offering
+    // a FUT section, exactly as before.
+    expect(resolution).toEqual({ conid: 466221142, conidSpec: 'FUT' })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails on a contract month the listing does not offer instead of taking the first section', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+
+    await expect(
+      resolveIbkrConidFromApi({
+        symbol: 'MESZ99',
+        assetClass: 'future',
+        context: { marketCode: 'XCME', currency: 'USD' },
+      })
+    ).rejects.toThrow('Unable to resolve IBKR contract identifier for symbol MESZ99')
+  })
+
+  it('does not read a contract month out of a code that is not one', async () => {
+    // `Y` is not a month code, so `MESY25` is searched verbatim - and the
+    // endpoint has nothing by that name. Silently resolving it to the root's
+    // first contract would trade the wrong instrument.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockImplementation(
+      async ({ url }: { url: string }) =>
+        (url.includes('symbol=MESY25') ? [] : mesContractMonthRows) as never
+    )
+
+    await expect(
+      resolveIbkrConidFromApi({
+        symbol: 'MESY25',
+        assetClass: 'future',
+        context: { marketCode: 'XCME', currency: 'USD' },
+      })
+    ).rejects.toThrow('Unable to resolve IBKR contract identifier for symbol MESY25')
+    expect(vi.mocked(fetchBrokerJson).mock.calls[0]?.[0]?.url ?? '').toContain('symbol=MESY25')
+  })
+
+  it('lets the synchronous order-path read find what a contract-month lookup wrote', async () => {
+    // The order pipeline reads the conid SYNCHRONOUSLY and can only pass the
+    // symbol and the listing context it derives from the order params - never
+    // an expiry (see resolveIbkrOrderListingContext). So the entry has to be
+    // reachable from the symbol alone, or the order path disagrees with the
+    // market path that seeded it.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+    const context = { marketCode: 'XCME', currency: 'USD' }
+
+    await resolveIbkrConidFromApi({ symbol: 'MESZ25', assetClass: 'future', context })
+    const cached = resolveIbkrConid({ symbol: 'MESZ25', assetClass: 'future', context })
+
+    expect(cached).toEqual({ conid: 515151515, conidSpec: 'FUT' })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
   })
 
   it('requires an access token only against the hosted API', async () => {
