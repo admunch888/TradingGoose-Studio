@@ -99,6 +99,13 @@ export interface TradingProviderConfig {
 }
 
 export interface TradingProviderAdapter {
+  /**
+   * Optional async preparation the shared order pipeline awaits before
+   * buildOrderRequest runs. Providers whose order request cannot be built from
+   * a cold start (IBKR resolves and caches the contract identifier, and the
+   * build itself is synchronous) implement this; it is a no-op elsewhere.
+   */
+  prepareOrderRequest?: (params: TradingOrderInput) => Promise<void>
   buildOrderRequest?: (params: TradingOrderInput) => TradingRequestConfig
   orderDetailRequest?: (
     historyRecord: TradingOrderHistoryRecord,

@@ -50,6 +50,18 @@ export function executeTradingProviderRequest(
   return provider.buildOrderRequest(request)
 }
 
+/**
+ * Whatever the adapter has to do before its order request can be built - IBKR
+ * seeds its contract-identifier cache here, because building its request reads
+ * that cache synchronously. A no-op for adapters that do not need it.
+ */
+export async function prepareTradingProviderRequest(
+  providerId: TradingProviderId,
+  request: TradingOrderRequest
+): Promise<void> {
+  await getTradingProviderAdapter(providerId).prepareOrderRequest?.(request)
+}
+
 export async function executeTradingProviderOrderDetailRequest(
   providerId: TradingProviderId,
   historyRecord: TradingOrderHistoryRecord,

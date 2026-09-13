@@ -24,7 +24,11 @@ import type {
   TradingOrderSubmitRequest,
   TradingOrderSubmitResponse,
 } from '@/lib/trading/order-types'
-import { executeTradingProviderRequest, getTradingProviderAdapter } from '@/providers/trading'
+import {
+  executeTradingProviderRequest,
+  getTradingProviderAdapter,
+  prepareTradingProviderRequest,
+} from '@/providers/trading'
 import { resolveTradingListingIdentity } from '@/providers/trading/listing-resolution'
 import {
   getStrictTradingOrderTypeDefinitions,
@@ -38,7 +42,7 @@ import { toPortfolioValueObject } from '@/providers/trading/portfolio-identity'
 import { fetchBrokerJson, TradingBrokerRequestError } from '@/providers/trading/portfolio-utils'
 import type { TradingOrderTypeDefinition } from '@/providers/trading/providers'
 import { getTradingOrderCapabilities } from '@/providers/trading/providers'
-import type { TradingOrder, TradingOrderType } from '@/providers/trading/types'
+import type { TradingOrder, TradingOrderRequest, TradingOrderType } from '@/providers/trading/types'
 import {
   isTradingOrderListingSupported,
   resolveTradingListingAssetClass,
@@ -221,7 +225,7 @@ const resolveOrderListing = async (
   return resolved
 }
 
-const buildOrderRequest = ({
+const buildOrderRequest = async ({
   providerId,
   data,
   listing,
@@ -244,7 +248,7 @@ const buildOrderRequest = ({
   timeInForce: string
   orderSizingMode: TradingOrderSubmitRequest['orderSizingMode']
 }) => {
-  return executeTradingProviderRequest(providerId, {
+  const request: TradingOrderRequest = {
     kind: 'order',
     accessToken,
     accountId,
@@ -270,7 +274,15 @@ const buildOrderRequest = ({
       ? data.trailPercent
       : undefined,
     preview: data.preview,
-  })
+  }
+
+  // Adapters that cannot build an order request from a cold start do their
+  // lookups here (IBKR resolves and caches the contract identifier; its build
+  // is a synchronous cache read). Without this the very first order for a
+  // listing fails before it is sent.
+  await prepareTradingProviderRequest(providerId, request)
+
+  return executeTradingProviderRequest(providerId, request)
 }
 
 const MESSAGE_KEYS = ['message', 'status_message', 'reason', 'reject_reason', 'error'] as const
@@ -421,7 +433,7 @@ export async function submitTradingOrder({
       let rawOrder: unknown
       let normalizedOrder: TradingOrder
       try {
-        const providerRequest = buildOrderRequest({
+        const providerRequest = await buildOrderRequest({
           providerId: baseContext.providerId,
           data: requestData,
           listing: resolvedListing,
