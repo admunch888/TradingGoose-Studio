@@ -24,6 +24,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockEnvironmentVariables } from '@/tools/__test-utils__/test-tools'
 import { executeTool } from '@/tools/index'
+import { coerceParametersToDeclaredTypes } from '@/tools/utils'
 
 const permissionMocks = vi.hoisted(() => ({
   checkWorkspaceAccess: vi.fn(),
@@ -320,6 +321,98 @@ describe('block -> tool boundary coerces parameters to the types the tool declar
 
       const body = findRequest('google.serper.dev/search').body
       expect(Object.hasOwn(body, 'num')).toBe(false)
+    })
+  })
+
+  describe('declared-type coercion rules', () => {
+    const toolWith = (params: Record<string, any>) =>
+      ({ id: 'rule-tool', name: 'Rule Tool', params }) as any
+
+    it('coerces numbers and leaves values it cannot coerce for validation', () => {
+      const tool = toolWith({ n: { type: 'number' } })
+
+      expect(coerceParametersToDeclaredTypes(tool, { n: '12' })).toEqual({ n: 12 })
+      expect(coerceParametersToDeclaredTypes(tool, { n: ' 0.8 ' })).toEqual({ n: 0.8 })
+      expect(coerceParametersToDeclaredTypes(tool, { n: 12 })).toEqual({ n: 12 })
+      expect(coerceParametersToDeclaredTypes(tool, { n: '-3' })).toEqual({ n: -3 })
+      expect(coerceParametersToDeclaredTypes(tool, { n: 'abc' })).toEqual({ n: 'abc' })
+      expect(coerceParametersToDeclaredTypes(tool, { n: '1e3' })).toEqual({ n: 1000 })
+      // '12.5' stays a number: integer-ness is not declared by the tool, so the
+      // consumer's own schema keeps rejecting it.
+      expect(coerceParametersToDeclaredTypes(tool, { n: '12.5' })).toEqual({ n: 12.5 })
+    })
+
+    it('turns a blank numeric into undefined rather than 0 or NaN', () => {
+      const tool = toolWith({ n: { type: 'number' } })
+
+      expect(coerceParametersToDeclaredTypes(tool, { n: '' })).toEqual({ n: undefined })
+      expect(coerceParametersToDeclaredTypes(tool, { n: '   ' })).toEqual({ n: undefined })
+      expect(coerceParametersToDeclaredTypes(tool, {})).toEqual({})
+    })
+
+    it('leaves undefined and null values untouched', () => {
+      const tool = toolWith({ n: { type: 'number' } })
+
+      expect(coerceParametersToDeclaredTypes(tool, { n: undefined })).toEqual({ n: undefined })
+      expect(coerceParametersToDeclaredTypes(tool, { n: null })).toEqual({ n: null })
+    })
+
+    it('coerces booleans and leaves values it cannot interpret alone', () => {
+      const tool = toolWith({ b: { type: 'boolean' } })
+
+      expect(coerceParametersToDeclaredTypes(tool, { b: 'true' })).toEqual({ b: true })
+      expect(coerceParametersToDeclaredTypes(tool, { b: 'FALSE' })).toEqual({ b: false })
+      expect(coerceParametersToDeclaredTypes(tool, { b: '1' })).toEqual({ b: true })
+      expect(coerceParametersToDeclaredTypes(tool, { b: 0 })).toEqual({ b: false })
+      expect(coerceParametersToDeclaredTypes(tool, { b: true })).toEqual({ b: true })
+      expect(coerceParametersToDeclaredTypes(tool, { b: 'yes' })).toEqual({ b: 'yes' })
+    })
+
+    it('parses JSON strings for json/object/array parameters', () => {
+      const tool = toolWith({
+        j: { type: 'json' },
+        o: { type: 'object' },
+        a: { type: 'array' },
+      })
+
+      expect(coerceParametersToDeclaredTypes(tool, { j: '{"bars":[{"close":1}]}' })).toEqual({
+        j: { bars: [{ close: 1 }] },
+      })
+      expect(coerceParametersToDeclaredTypes(tool, { o: '{"a":1}' })).toEqual({ o: { a: 1 } })
+      expect(coerceParametersToDeclaredTypes(tool, { a: '[1,2]' })).toEqual({ a: [1, 2] })
+      // Real values are untouched.
+      expect(coerceParametersToDeclaredTypes(tool, { a: [1, 2], o: { a: 1 } })).toEqual({
+        a: [1, 2],
+        o: { a: 1 },
+      })
+      // A string that does not parse, or parses to the wrong shape, is left for the
+      // consumer to reject.
+      expect(coerceParametersToDeclaredTypes(tool, { j: 'not json' })).toEqual({ j: 'not json' })
+      expect(coerceParametersToDeclaredTypes(tool, { a: '{"a":1}' })).toEqual({ a: '{"a":1}' })
+      expect(coerceParametersToDeclaredTypes(tool, { o: '[1,2]' })).toEqual({ o: '[1,2]' })
+      // A declared `string` keeps JSON-looking content as a string (e.g. MongoDB's
+      // `query`/`sort` params and a custom tool's raw schema text).
+      expect(coerceParametersToDeclaredTypes(toolWith({ s: { type: 'string' } }), { s: '{"a":1}' })).toEqual(
+        { s: '{"a":1}' }
+      )
+    })
+
+    it('never touches parameters the tool does not declare or a missing tool', () => {
+      const tool = toolWith({ n: { type: 'number' } })
+
+      expect(
+        coerceParametersToDeclaredTypes(tool, { n: '1', extra: '2', _context: { a: 1 } })
+      ).toEqual({ n: 1, extra: '2', _context: { a: 1 } })
+      expect(coerceParametersToDeclaredTypes(undefined, { n: '1' })).toEqual({ n: '1' })
+    })
+
+    it('does not mutate the params object it is given', () => {
+      const tool = toolWith({ n: { type: 'number' } })
+      const params = { n: '12' }
+
+      coerceParametersToDeclaredTypes(tool, params)
+
+      expect(params.n).toBe('12')
     })
   })
 })

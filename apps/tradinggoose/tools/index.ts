@@ -16,6 +16,7 @@ import type { ErrorInfo } from '@/tools/error-extractors'
 import { extractErrorMessage } from '@/tools/error-extractors'
 import type { ToolConfig, ToolResponse } from '@/tools/types'
 import {
+  coerceParametersToDeclaredTypes,
   createToolConfig,
   formatRequestParams,
   getTool,
@@ -492,6 +493,11 @@ export async function executeTool(
     if (tool.execution?.submissionSource === 'required' && !scope.submissionSource) {
       throw new Error(`${toolId} requires explicit submission source`)
     }
+
+    // Coerce parameters to the types the tool declares before validation and dispatch.
+    // Stored block inputs arrive as strings (a `short-input` with `inputType: 'number'`
+    // is stored verbatim), and a block transform cannot be relied on to type them.
+    Object.assign(contextParams, coerceParametersToDeclaredTypes(tool, contextParams))
 
     validateRequiredParametersAfterMerge(toolId, tool, contextParams)
 
