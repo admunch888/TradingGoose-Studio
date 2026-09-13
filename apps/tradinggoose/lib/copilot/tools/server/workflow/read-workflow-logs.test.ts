@@ -121,6 +121,36 @@ describe('readWorkflowLogsServerTool', () => {
     })
   })
 
+  it('resolves the workflow from the execution context when no id is supplied', async () => {
+    const { readWorkflowLogsServerTool } = await import('./read-workflow-logs')
+    const result = await readWorkflowLogsServerTool.execute(
+      {},
+      {
+        userId: 'user-1',
+        contextEntityKind: 'workflow',
+        contextEntityId: 'wf-open',
+      }
+    )
+
+    expect(mocks.eq).toHaveBeenCalledWith('workflowExecutionLogs.workflowId', 'wf-open')
+    expect(result).toMatchObject({ entityId: 'wf-open' })
+  })
+
+  it('still requires an entityId when the context carries no workflow', async () => {
+    const { readWorkflowLogsServerTool } = await import('./read-workflow-logs')
+
+    await expect(
+      readWorkflowLogsServerTool.execute(
+        {},
+        {
+          userId: 'user-1',
+          contextEntityKind: 'watchlist',
+          contextEntityId: 'watchlist-1',
+        }
+      )
+    ).rejects.toThrow('entityId is required for read_workflow_logs')
+  })
+
   it('returns bounded, redacted details only for the exact selected execution log', async () => {
     mocks.rows[0].executionData = {
       errorDetails: { error: 'selected failure', apiKey: 'raw-secret' },
