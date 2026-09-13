@@ -42,7 +42,12 @@ USER appuser
 
 EXPOSE 8000
 
+# Probe by address, not by name: name resolution inside a container depends on
+# /etc/hosts ordering, and a liveness check should not depend on the resolver.
+# (This was investigated as the cause of an observed `unhealthy` status and
+# refuted - the real cause was the model still loading, ~5 minutes on CPU - so
+# treat this as hygiene rather than a fix.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')" || exit 1
 
 CMD ["uvicorn", "kronos_api.main:create_app", "--host", "0.0.0.0", "--port", "8000", "--factory"]
