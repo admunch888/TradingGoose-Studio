@@ -15,15 +15,15 @@
  * that changes between runs.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { normalizeMarketProviderError } from '@/providers/market/errors'
 import {
   fetchIbkrMarketJson,
-  IbkrRequestPacer,
   type IbkrPacingConfig,
   type IbkrPacingRuntime,
+  IbkrRequestPacer,
   withIbkrRateLimitRetry,
 } from '@/providers/market/ibkr/pacing'
 
@@ -250,7 +250,10 @@ describe('IbkrRequestPacer - serial queue with a minimum interval', () => {
 
   it('does not wait when the previous call was already longer than the interval', async () => {
     const clock = new FakeClock()
-    const pacer = new IbkrRequestPacer({ config: { ...testConfig, minIntervalMs: 350 }, runtime: clock })
+    const pacer = new IbkrRequestPacer({
+      config: { ...testConfig, minIntervalMs: 350 },
+      runtime: clock,
+    })
 
     await pacer.run(async () => {
       clock.time += 5_000 // a slow gateway answer

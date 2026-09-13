@@ -108,6 +108,13 @@ function safeCreateEnv() {
     KRONOS_TIMEOUT_MS: z.number().int().positive().optional(),       // Timeout for Kronos requests in ms
     KRONOS_MAX_HORIZON: z.number().int().positive().optional(),      // Max forecast horizon in bars
 
+    // IBKR Client Portal Gateway pacing & retry (READ-ONLY market data only)
+    IBKR_MARKET_MIN_INTERVAL_MS: z.number().int().nonnegative().optional(),     // Min spacing between gateway market-data calls (default 350)
+    IBKR_MARKET_RETRY_MAX_ATTEMPTS: z.number().int().positive().optional(),     // Max attempts incl. the first, on 429/503 (default 4)
+    IBKR_MARKET_RETRY_BASE_MS: z.number().int().positive().optional(),          // First backoff before jitter (default 500)
+    IBKR_MARKET_RETRY_MAX_MS: z.number().int().positive().optional(),           // Hard cap on a single backoff (default 8000)
+    IBKR_MARKET_RETRY_BUDGET_MS: z.number().int().positive().optional(),        // Total wall-clock budget per paced call (default 20000)
+
     // Cloud Storage - AWS S3
     STORAGE_PROVIDER: z.enum(['local', 's3', 'azure', 'vercel']).optional(),                  // Explicit storage provider override
     AWS_REGION: z.string().optional(),                  // AWS region for S3 buckets

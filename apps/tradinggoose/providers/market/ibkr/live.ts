@@ -1,12 +1,12 @@
 import { createLogger } from '@/lib/logs/console/logger'
 import { ibkrMarketProviderConfig } from '@/providers/market/ibkr/config'
+import { fetchIbkrMarketJson } from '@/providers/market/ibkr/pacing'
 import type { MarketBar, MarketLiveRequest, MarketLiveSnapshot } from '@/providers/market/types'
 import { resolveListingContext, resolveProviderSymbol } from '@/providers/market/utils'
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
 import { buildIbkrApiUrl } from '@/providers/trading/ibkr/client'
 import { ensureIbkrSession } from '@/providers/trading/ibkr/session'
 import { resolveIbkrConidFromApi } from '@/providers/trading/ibkr/symbols'
-import { fetchBrokerJson } from '@/providers/trading/portfolio-utils'
 
 const logger = createLogger('MarketProvider:IBKR:Live')
 
@@ -62,17 +62,19 @@ export async function fetchIbkrLiveSnapshot(
 
   // IBKR primes the subscription on first call and frequently returns a row
   // without price fields; the immediate follow-up carries the data. One retry
-  // is enough and avoids reporting a spurious "no data" to the widget.
-  let rows = await fetchBrokerJson<IbkrSnapshotRow[]>({
-    providerId: 'ibkr',
+  // is enough and avoids reporting a spurious "no data" to the widget. Both
+  // calls go through the shared gateway queue and the 429/503 retry - this poll
+  // is one of the two callers whose collision the pacer exists to prevent.
+  let rows = await fetchIbkrMarketJson<IbkrSnapshotRow[]>({
     url,
     init: { method: 'GET', headers },
+    label: 'snapshot',
   })
   if (!rows?.[0] || toNumber(rows[0]['31']) === undefined) {
-    rows = await fetchBrokerJson<IbkrSnapshotRow[]>({
-      providerId: 'ibkr',
+    rows = await fetchIbkrMarketJson<IbkrSnapshotRow[]>({
       url,
       init: { method: 'GET', headers },
+      label: 'snapshot',
     })
   }
 

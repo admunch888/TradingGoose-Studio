@@ -88,10 +88,7 @@ const readPositiveInt = (variable: string, fallback: number): number => {
  * silently disabling pacing with a `NaN`.
  */
 export const resolveIbkrPacingConfig = (): IbkrPacingConfig => ({
-  minIntervalMs: readPositiveInt(
-    'IBKR_MARKET_MIN_INTERVAL_MS',
-    IBKR_PACING_DEFAULTS.minIntervalMs
-  ),
+  minIntervalMs: readPositiveInt('IBKR_MARKET_MIN_INTERVAL_MS', IBKR_PACING_DEFAULTS.minIntervalMs),
   maxAttempts: Math.max(
     1,
     readPositiveInt('IBKR_MARKET_RETRY_MAX_ATTEMPTS', IBKR_PACING_DEFAULTS.maxAttempts)
@@ -104,10 +101,7 @@ export const resolveIbkrPacingConfig = (): IbkrPacingConfig => ({
     1,
     readPositiveInt('IBKR_MARKET_RETRY_MAX_MS', IBKR_PACING_DEFAULTS.retryMaxMs)
   ),
-  retryBudgetMs: readPositiveInt(
-    'IBKR_MARKET_RETRY_BUDGET_MS',
-    IBKR_PACING_DEFAULTS.retryBudgetMs
-  ),
+  retryBudgetMs: readPositiveInt('IBKR_MARKET_RETRY_BUDGET_MS', IBKR_PACING_DEFAULTS.retryBudgetMs),
 })
 
 export const createIbkrPacingRuntime = (): IbkrPacingRuntime => ({
@@ -307,7 +301,10 @@ const runtimeOf = (): IbkrPacingRuntime => (sharedRuntime ??= createIbkrPacingRu
  * point: they queue behind each other.
  */
 const pacerOf = (): IbkrRequestPacer =>
-  (sharedPacer ??= new IbkrRequestPacer({ config: resolveIbkrPacingConfig(), runtime: runtimeOf() }))
+  (sharedPacer ??= new IbkrRequestPacer({
+    config: resolveIbkrPacingConfig(),
+    runtime: runtimeOf(),
+  }))
 
 /**
  * Fetch JSON from an IBKR gateway MARKET-DATA endpoint: paced behind the shared
@@ -342,8 +339,7 @@ export async function fetchIbkrMarketJson<T>({
     // Each outbound attempt goes through the pacer, so the minimum interval
     // applies to retries too - a retry is still a request to a gateway that is
     // refusing them.
-    task: () =>
-      resolvedPacer.run(() => fetchBrokerJson<T>({ providerId: 'ibkr', url, init })),
+    task: () => resolvedPacer.run(() => fetchBrokerJson<T>({ providerId: 'ibkr', url, init })),
   })
 }
 
