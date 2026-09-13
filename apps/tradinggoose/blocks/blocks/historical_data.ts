@@ -2,14 +2,25 @@ import { ChartBarIcon } from '@/components/icons/icons'
 import { LISTING_IDENTITY_VALUE_TYPE } from '@/lib/listing/identity'
 import type { BlockConfig, SubBlockConfig } from '@/blocks/types'
 import { AuthMode } from '@/blocks/types'
+import { requiredUserOrLlmInput } from '@/blocks/utils'
 import {
   coerceMarketProviderParamValue,
   getMarketProviderParamCatalog,
   getMarketProvidersByKind,
   getMarketSeriesCapabilities,
   type MarketProviderParamType,
+  type MarketSeriesInputCapabilities,
 } from '@/providers/market/providers'
-import type { NormalizationMode } from '@/providers/market/types'
+import {
+  normalizeSeriesWindow,
+  resolveDefaultSeriesInterval,
+  resolveDefaultSeriesWindow,
+} from '@/providers/market/series-window'
+import type {
+  MarketSeriesWindow,
+  MarketSeriesWindowMode,
+  NormalizationMode,
+} from '@/providers/market/types'
 import type { MarketSeriesOutput } from '@/tools/market_data'
 import type { ToolResponse } from '@/tools/types'
 
@@ -129,6 +140,53 @@ const sanitizeNormalizationMode = (
   if (modes.length === 0) return undefined
   if (!modes.includes(mode as NormalizationMode)) return undefined
   return mode as NormalizationMode
+}
+
+const ALL_SERIES_WINDOW_MODES: MarketSeriesWindowMode[] = ['range', 'bars', 'absolute']
+
+const parseWindowValue = (value: unknown): MarketSeriesWindow | undefined => {
+  if (!value) return undefined
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' ? (parsed as MarketSeriesWindow) : undefined
+    } catch (_error) {
+      return undefined
+    }
+  }
+  if (typeof value === 'object') return value as MarketSeriesWindow
+  return undefined
+}
+
+/**
+ * Resolves the compound `window` the market-series tool requires.
+ *
+ * The tool consumes `window` (range | bars | absolute), never the block's raw
+ * `start`/`end`, so a block that only carried dates used to dispatch a request with
+ * no window at all and died mid-run with `"Window" is required for Market Series Fetch`.
+ * An explicit `window`, then `start`/`end`, then a provider-compatible default are tried
+ * in that order, so an unconfigured block still produces a runnable request.
+ */
+const resolveSeriesWindow = (
+  params: Record<string, any>,
+  capabilities: MarketSeriesInputCapabilities | null
+): MarketSeriesWindow | undefined => {
+  const allowedModes =
+    capabilities?.windowModes && capabilities.windowModes.length > 0
+      ? capabilities.windowModes
+      : ALL_SERIES_WINDOW_MODES
+
+  const requested: Array<MarketSeriesWindow | undefined> = [parseWindowValue(params.window)]
+  if (params.start) {
+    requested.push({ mode: 'absolute', start: params.start, end: params.end ?? undefined })
+  }
+
+  for (const candidate of requested) {
+    const normalized = normalizeSeriesWindow(candidate, allowedModes)
+    if (normalized) return normalized
+  }
+
+  return resolveDefaultSeriesWindow(allowedModes) ?? undefined
 }
 
 const resolveParamInputType = (paramId: string): SubBlockConfig['type'] => {
@@ -289,7 +347,8 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
       layout: 'full',
       placeholder: 'Start time',
       timePicker: { hour: true, minute: true, second: false },
-      required: true,
+      // Optional: with no Start/End the block defaults the request window.
+      required: false,
     },
     {
       id: 'end',
@@ -298,7 +357,8 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
       layout: 'full',
       placeholder: 'End time',
       timePicker: { hour: true, minute: true, second: false },
-      required: true,
+      // Optional: with no Start/End the block defaults the request window.
+      required: false,
     },
   ],
   tools: {
@@ -325,7 +385,10 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
           }
         })
 
-        const interval = sanitizeInterval(params.provider, params.interval)
+        const capabilities = getMarketSeriesCapabilities(params.provider)
+        const interval =
+          sanitizeInterval(params.provider, params.interval) ??
+          resolveDefaultSeriesInterval(capabilities)
         const normalizationMode = sanitizeNormalizationMode(
           params.provider,
           params.normalizationMode
@@ -340,8 +403,7 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
           provider: params.provider,
           listing: params.listing,
           interval,
-          start: params.start,
-          end: params.end,
+          window: resolveSeriesWindow(params, capabilities),
           normalizationMode,
           providerParams,
           apiKey: auth.apiKey,
@@ -352,9 +414,16 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
     },
   },
   inputs: {
-    provider: { type: 'string', description: 'Market provider id' },
-    listing: { type: LISTING_IDENTITY_VALUE_TYPE, description: 'Structured listing payload' },
+    // Required, so a workflow missing either fails serialization before dispatch - but
+    // visible to the LLM, so the local CoPilot can fill them ("use AAPL"). The serializer
+    // validates required inputs regardless of visibility, so requiredness is unchanged.
+    provider: requiredUserOrLlmInput('string', 'Market provider id'),
+    listing: requiredUserOrLlmInput(LISTING_IDENTITY_VALUE_TYPE, 'Structured listing payload'),
     interval: { type: 'string', description: 'Series interval/timeframe' },
+    window: {
+      type: 'json',
+      description: 'Series window (range, bars, or absolute) sent to the provider',
+    },
     start: {
       type: 'string',
       description: 'Inclusive start of the interval (ISO or UNIX timestamp)',

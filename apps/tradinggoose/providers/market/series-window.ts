@@ -6,6 +6,74 @@ import type {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+/**
+ * Bar count used when a caller (block, widget) has no explicit window. Matches the
+ * chart widget default so a caller-provided series and an editor-provided series agree.
+ */
+export const DEFAULT_SERIES_BAR_COUNT = 500
+
+/** Range used only when a provider does not advertise `bars` window support. */
+export const DEFAULT_SERIES_RANGE: MarketSeriesRange = { value: 1, unit: 'year' }
+
+/**
+ * Smallest shape a provider-param capability needs for interval defaulting. Kept
+ * structural so this module stays free of provider-config imports.
+ */
+export interface SeriesIntervalCapabilities {
+  supportsInterval?: boolean
+  intervals?: ReadonlyArray<string>
+}
+
+/**
+ * Builds a window that a provider advertising `allowedModes` accepts. `bars` is
+ * preferred because every registered series provider advertises it and a bar count
+ * is stable across intervals and market calendars.
+ */
+export const resolveDefaultSeriesWindow = (
+  allowedModes?: MarketSeriesWindowMode[]
+): MarketSeriesWindow | null => {
+  const modes: MarketSeriesWindowMode[] =
+    allowedModes && allowedModes.length > 0 ? allowedModes : ['bars']
+
+  if (modes.includes('bars')) {
+    return { mode: 'bars', barCount: DEFAULT_SERIES_BAR_COUNT }
+  }
+
+  if (modes.includes('range')) {
+    return { mode: 'range', range: DEFAULT_SERIES_RANGE }
+  }
+
+  if (modes.includes('absolute')) {
+    const endMs = Date.now()
+    const startMs = endMs - (rangeToMs(DEFAULT_SERIES_RANGE) ?? 0)
+    return {
+      mode: 'absolute',
+      start: new Date(startMs).toISOString(),
+      end: new Date(endMs).toISOString(),
+    }
+  }
+
+  return null
+}
+
+/**
+ * Picks a default interval for a provider. Returns undefined when the provider
+ * declares no interval support or advertises an empty interval list, so callers
+ * never emit an interval the provider rejects. Prefers a daily interval because the
+ * editor's series blocks are used for daily-resolution analysis by default.
+ */
+export const resolveDefaultSeriesInterval = (
+  capabilities?: SeriesIntervalCapabilities | null
+): string | undefined => {
+  if (!capabilities) return undefined
+  if (capabilities.supportsInterval === false) return undefined
+
+  const intervals = capabilities.intervals ?? []
+  if (intervals.length === 0) return undefined
+
+  return intervals.includes('1d') ? '1d' : intervals[0]
+}
+
 const parseDateInput = (value?: string | number | null): Date | null => {
   if (value === undefined || value === null) return null
   const date = new Date(value)

@@ -224,7 +224,7 @@ export class Serializer {
       // no-op: conservative, avoid blocking serialization if blockConfig is unexpected
     }
 
-    // Validate required fields that only users can provide (before execution starts)
+    // Validate required fields (whether user-only or LLM-fillable) before execution starts
     if (options.validateRequired) {
       this.validateRequiredFieldsBeforeExecution(block, blockConfig, params)
     }
@@ -339,6 +339,15 @@ export class Serializer {
     return params
   }
 
+  /**
+   * Fails the workflow before it is handed to the Executor when a required input is blank.
+   *
+   * `visibility` is deliberately NOT consulted here. It only governs who may fill an
+   * input in the editor (`user-only` vs `user-or-llm`, the latter also fillable by the
+   * local CoPilot/LLM). Whether an input is *required* is a property of the workflow's
+   * correctness, so gating on `visibility === 'user-only'` conflated the two and let a
+   * required `user-or-llm` input reach the executor blank, failing mid-run instead.
+   */
   private validateRequiredFieldsBeforeExecution(
     block: BlockState,
     blockConfig: any,
@@ -367,11 +376,9 @@ export class Serializer {
 
       const paramId = subBlockConfig.canonicalParamId ?? subBlockConfig.id
       const paramConfig = blockConfig.inputs?.[paramId] ?? blockConfig.inputs?.[subBlockConfig.id]
-      if (
-        paramConfig?.visibility !== 'user-only' ||
-        paramConfig.required !== true ||
-        missingParamIds.has(paramId)
-      ) {
+      // Validate every required input regardless of its visibility: a missing required
+      // input fails here whether it is user-only or user-or-llm.
+      if (paramConfig?.required !== true || missingParamIds.has(paramId)) {
         return
       }
 

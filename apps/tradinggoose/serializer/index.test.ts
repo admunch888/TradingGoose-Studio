@@ -577,6 +577,8 @@ describe('Serializer', () => {
   })
 
   describe('validation during serialization', () => {
+    // Required inputs may be user-only or user-or-llm; both are validated the same way,
+    // so this user-only case keeps its original behaviour.
     it.concurrent('should throw error for missing user-only required fields', () => {
       const serializer = new Serializer()
 
@@ -632,7 +634,7 @@ describe('Serializer', () => {
       }).not.toThrow()
     })
 
-    it.concurrent('should not validate user-or-llm fields during serialization', () => {
+    it.concurrent('should validate a missing required user-or-llm field', () => {
       const serializer = new Serializer()
 
       // Create a Reddit block with missing subreddit (user-or-llm field)
@@ -644,13 +646,15 @@ describe('Serializer', () => {
         subBlocks: {
           operation: { value: 'get_posts' },
           credential: { value: 'test-credential' },
-          subreddit: { value: null }, // Missing user-or-llm field - should NOT be validated here
+          subreddit: { value: null }, // Required, LLM-fillable, and left empty
         },
         outputs: {},
         enabled: true,
       }
 
-      // Should NOT throw because subreddit is user-or-llm, not user-only
+      // Whether an input is required is a property of the workflow's correctness;
+      // visibility only says who may fill it. A required input left empty must fail
+      // before dispatch whether it is user-only or user-or-llm.
       expect(() => {
         serializer.serializeWorkflow(
           { 'test-block': blockWithMissingUserOrLlmField },
@@ -659,7 +663,7 @@ describe('Serializer', () => {
           undefined,
           true
         )
-      }).not.toThrow()
+      }).toThrow('Test Reddit Block is missing required fields: Subreddit')
     })
 
     it.concurrent('should not validate when validateRequired is false', () => {
@@ -684,7 +688,7 @@ describe('Serializer', () => {
       }).not.toThrow()
     })
 
-    it.concurrent('should validate multiple user-only fields and report all missing', () => {
+    it.concurrent('should report every missing required field', () => {
       const serializer = new Serializer()
 
       const blockWithMultipleMissing: any = {
@@ -693,7 +697,7 @@ describe('Serializer', () => {
         name: 'Test Jina Block',
         position: { x: 0, y: 0 },
         subBlocks: {
-          url: { value: null }, // Missing user-or-llm field (should NOT be validated)
+          url: { value: null }, // Missing required user-or-llm field - validated too
           apiKey: { value: null }, // Missing user-only field (should be validated)
         },
         outputs: {},
@@ -708,7 +712,7 @@ describe('Serializer', () => {
           undefined,
           true
         )
-      }).toThrow('Test Jina Block is missing required fields: API Key')
+      }).toThrow('Test Jina Block is missing required fields: URL, API Key')
     })
 
     it.concurrent('should handle blocks with no tool configuration gracefully', () => {
@@ -759,7 +763,7 @@ describe('Serializer', () => {
       }).toThrow('Test Jina Block is missing required fields: API Key')
     })
 
-    it.concurrent('should only validate user-only fields, not user-or-llm fields', () => {
+    it.concurrent('should validate user-only and user-or-llm required fields', () => {
       const serializer = new Serializer()
 
       // Block with both user-only and user-or-llm missing fields
@@ -771,7 +775,7 @@ describe('Serializer', () => {
         subBlocks: {
           operation: { value: 'get_posts' },
           credential: { value: null }, // user-only - should be validated
-          subreddit: { value: null }, // user-or-llm - should NOT be validated
+          subreddit: { value: null }, // user-or-llm - validated as well
         },
         outputs: {},
         enabled: true,
@@ -779,7 +783,7 @@ describe('Serializer', () => {
 
       expect(() => {
         serializer.serializeWorkflow({ 'test-block': mixedBlock }, [], {}, undefined, true)
-      }).toThrow('Test Reddit Block is missing required fields: Reddit Account')
+      }).toThrow('Test Reddit Block is missing required fields: Reddit Account, Subreddit')
     })
 
     it.concurrent('should validate canonical param ids after source ids are consolidated', () => {

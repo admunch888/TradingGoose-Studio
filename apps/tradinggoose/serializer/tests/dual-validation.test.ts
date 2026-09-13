@@ -4,8 +4,11 @@
  * Integration Tests for Validation Architecture
  *
  * These tests verify the complete validation flow:
- * 1. Early validation (serialization) - user-only required fields
- * 2. Late validation (tool execution) - user-or-llm required fields
+ * 1. Early validation (serialization) - every required field, regardless of
+ *    visibility: a required input must not be blank before the run is dispatched
+ * 2. Late validation (tool execution) - required user-or-llm fields on the merged
+ *    parameters, which guards the tool-call path (agent/LLM supplied values) that
+ *    never passes through the serializer
  */
 import { describe, expect, it, vi } from 'vitest'
 import { Serializer } from '@/serializer/index'
@@ -86,7 +89,7 @@ describe('Validation Integration Tests', () => {
   })
 
   it.concurrent(
-    'early validation should allow missing user-or-llm fields (LLM can provide later)',
+    'early validation should also catch a missing required user-or-llm field, not only user-only ones',
     () => {
       const serializer = new Serializer()
 
@@ -104,7 +107,7 @@ describe('Validation Integration Tests', () => {
         enabled: true,
       }
 
-      // Should pass serialization (early validation doesn't check user-or-llm fields)
+      // Fails at serialization: requiredness is independent of who may fill the input
       expect(() => {
         serializer.serializeWorkflow(
           { 'jina-block': blockWithMissingUserOrLlmField },
@@ -113,7 +116,7 @@ describe('Validation Integration Tests', () => {
           undefined,
           true
         )
-      }).not.toThrow()
+      }).toThrow('Jina Content Extractor is missing required fields: URL')
     }
   )
 
@@ -214,7 +217,8 @@ describe('Validation Integration Tests', () => {
       )
     }).toThrow('Reddit Posts is missing required fields: Reddit Account')
 
-    // Scenario 2: Has user-only fields but missing user-or-llm - should pass serialization
+    // Scenario 2: Has user-only fields but a required user-or-llm field is blank -
+    // this now fails serialization as well as tool validation
     const blockMissingUserOrLlm: any = {
       id: 'reddit-block',
       type: 'reddit',
@@ -229,7 +233,6 @@ describe('Validation Integration Tests', () => {
       enabled: true,
     }
 
-    // Should pass serialization
     expect(() => {
       serializer.serializeWorkflow(
         { 'reddit-block': blockMissingUserOrLlm },
@@ -238,9 +241,9 @@ describe('Validation Integration Tests', () => {
         undefined,
         true
       )
-    }).not.toThrow()
+    }).toThrow('Reddit Posts is missing required fields: Subreddit')
 
-    // But should fail at tool validation
+    // The tool layer keeps its own guard for the pre-merge tool-call path
     const mergedParams = {
       subreddit: null, // Missing user-or-llm field
       credential: 'reddit-token', // Present user-only field
