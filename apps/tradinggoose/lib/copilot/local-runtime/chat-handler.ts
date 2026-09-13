@@ -41,9 +41,14 @@ export interface LocalChatHandlerParams {
   requestId: string
   /**
    * Server tools run in-process here, so there is no approval round-trip: the
-   * route does not carry an access level or review-entity context. Local turns
-   * therefore execute as 'limited', the same level the managed runtime uses for
-   * auto-accepted reviews.
+   * route does not carry an access level or review-entity context.
+   *
+   * Local turns MUST execute at 'full'. At 'limited' every mutating tool stages a
+   * review (access-policy.ts: only 'full' auto-executes) and returns
+   * `{ requiresReview: true, ... }` with no entityId and no database write, and
+   * nothing in this path can accept one - so the mutation was stranded while the
+   * tool still reported success (create_workflow produced five invisible
+   * workflows). 'full' is what the in-process design already assumed.
    */
   sessionCreatedThisRequest?: boolean
 }
@@ -145,7 +150,7 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
             requestId: params.requestId,
             ctx: {
               userId: params.userId,
-              accessLevel: 'limited',
+              accessLevel: 'full',
               ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
             },
             sink: {
@@ -268,7 +273,7 @@ export async function handleLocalCopilotContinuation(
             requestId: params.requestId,
             ctx: {
               userId: params.userId,
-              accessLevel: 'limited',
+              accessLevel: 'full',
             },
             sink: {
               send: (payload: Record<string, unknown>) => {
