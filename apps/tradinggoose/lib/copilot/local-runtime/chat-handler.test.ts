@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const capturedTurnCtx = vi.hoisted(() => ({ accessLevel: undefined as string | undefined }))
+
 vi.mock('@tradinggoose/db', () => {
   const rows: unknown[] = []
   const chain: Record<string, unknown> = {
@@ -28,8 +30,10 @@ vi.mock('@tradinggoose/db', () => {
 // Drive the sink with the exact payloads agent.ts sends.
 vi.mock('@/lib/copilot/local-runtime/agent', () => ({
   runLocalCopilotTurn: async (params: {
+    ctx?: { accessLevel?: string }
     sink: { send: (payload: Record<string, unknown>) => void }
   }) => {
+    capturedTurnCtx.accessLevel = params.ctx?.accessLevel
     params.sink.send({
       event: 'response.output_text.delta',
       data: { item_id: 'local_assistant_text', delta: 'Hello' },
@@ -73,6 +77,22 @@ describe('local copilot chat handler', () => {
     expect(response.headers.get('cache-control')).toContain('no-transform')
     expect(response.headers.get('x-accel-buffering')).toBe('no')
     expect(response.headers.get('connection')).toBe('keep-alive')
+  })
+
+  /**
+   * At 'limited' every mutating tool stages a review (access-policy.ts: only
+   * 'full' auto-executes) and returns `{ requiresReview: true, ... }` with no
+   * entityId and no database write. Nothing in the local path can accept one, so
+   * mutations were stranded while still reporting success: create_workflow then
+   * produced zero rows and no id, five times over. This fails if the level is
+   * ever lowered back to 'limited'.
+   */
+  it('executes local turns at full access so mutations are applied, not staged', async () => {
+    // The handler streams, so the turn (and therefore the tool context) only runs
+    // once the body is read.
+    await readFrames(await startTurn())
+
+    expect(capturedTurnCtx.accessLevel).toBe('full')
   })
 
   /**

@@ -62,7 +62,9 @@ export async function executeLocalCopilotServerTool(params: {
 
   const executionContext = {
     userId,
-    accessLevel: (context?.accessLevel ?? 'limited') as 'limited' | 'full',
+    // Default 'full', never 'limited': this executor only ever runs in-process from
+    // the local agent (agent.ts), where nothing can accept a staged review.
+    accessLevel: (context?.accessLevel ?? 'full') as 'limited' | 'full',
     ...(context?.contextEntityKind ? { contextEntityKind: context.contextEntityKind as never } : {}),
     ...(context?.contextEntityId ? { contextEntityId: context.contextEntityId } : {}),
     ...(context?.workspaceId ? { workspaceId: context.workspaceId } : {}),
@@ -82,6 +84,12 @@ export async function executeLocalCopilotServerTool(params: {
       | { requiresReview?: boolean; reviewToken?: string; reviewBaseStateHash?: unknown }
       | null
     if (maybeReview && maybeReview.requiresReview === true && maybeReview.reviewToken) {
+      // A staged mutation this path cannot accept: the caller is about to be told
+      // the tool succeeded while nothing was written. That used to happen silently
+      // for every mutation (the local runtime ran at 'limited').
+      logger.warn('Unaccepted server-tool review stripped; this mutation is NOT applied', {
+        toolName,
+      })
       const { requiresReview: _r, reviewToken, reviewBaseStateHash: _h, ...rest } =
         maybeReview as Record<string, unknown> & {
           requiresReview?: boolean
