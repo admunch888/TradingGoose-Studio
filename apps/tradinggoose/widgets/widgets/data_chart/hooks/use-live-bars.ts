@@ -4,6 +4,7 @@ import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 import type { ISeriesApi } from 'lightweight-charts'
 import type { Socket } from 'socket.io-client'
 import { areListingIdentitiesEqual, type ListingIdentity } from '@/lib/listing/identity'
+import { getMarketLiveCapabilities } from '@/providers/market/providers'
 import type { MarketBar } from '@/providers/market/types'
 import type { DataChartCandleType } from '@/widgets/widgets/data_chart/contract'
 import {
@@ -17,8 +18,6 @@ import {
 } from '@/widgets/widgets/data_chart/series-data'
 import type { DataChartDataContext } from '@/widgets/widgets/data_chart/types'
 
-type MarketLiveProvider = 'alpaca' | 'finnhub'
-
 type MarketTradeEvent = {
   provider?: string
   channel?: string
@@ -30,6 +29,51 @@ type MarketTradeEvent = {
     price?: number
     size?: number
   }
+}
+
+type MarketQuoteSnapshotEvent = {
+  provider?: string
+  channel?: string
+  subscriptionId?: string
+  listing?: ListingIdentity
+  snapshot?: {
+    lastPrice?: number | null
+  }
+}
+
+// Live channels the data chart can actually consume: `trades` arrives as
+// `market-trade` and is folded into the open candle, `quote-snapshots` arrives
+// as `market-quote-snapshot` and is adapted below. Providers that only declare
+// other channels (e.g. `quotes`) have no live feed this widget can render.
+const CONSUMABLE_LIVE_CHANNELS = ['trades', 'quote-snapshots'] as const
+
+/**
+ * Picks the live channel this widget can consume from a provider's declared
+ * capability channels. Prefers `trades` (continuous) over `quote-snapshots`
+ * (polled) so streaming providers keep their existing behaviour.
+ */
+export const selectLiveSubscriptionChannel = (
+  channels: readonly string[] | null | undefined
+): string | null => {
+  if (!channels || channels.length === 0) return null
+  for (const candidate of CONSUMABLE_LIVE_CHANNELS) {
+    if (channels.includes(candidate)) return candidate
+  }
+  return null
+}
+
+/**
+ * Adapts a polled quote snapshot into a flat market bar. `lastPrice` is the
+ * only price a snapshot carries; `aggregateLiveData` folds repeated snapshots
+ * into the current interval bucket, so open/high/low/close all start equal.
+ */
+export const mapQuoteSnapshotToMarketBar = (
+  snapshot: MarketQuoteSnapshotEvent['snapshot'],
+  timeStamp: string
+): MarketBar | null => {
+  const price = snapshot?.lastPrice
+  if (typeof price !== 'number' || !Number.isFinite(price)) return null
+  return { timeStamp, open: price, high: price, low: price, close: price }
 }
 
 type UseLiveBarsArgs = {
@@ -71,11 +115,11 @@ export const useLiveBars = ({
   const subscriptionRef = useRef<{
     subscriptionId?: string
     listing?: ListingIdentity | null
-    provider?: MarketLiveProvider
+    provider?: string
     interval?: string
     cleanup?: () => void
   } | null>(null)
-  const lastTradeTimestampMsRef = useRef<number>(Number.NEGATIVE_INFINITY)
+  const lastLiveUpdateTimestampMsRef = useRef<number>(Number.NEGATIVE_INFINITY)
 
   useEffect(() => {
     socketRef.current = socket ?? null
@@ -108,21 +152,25 @@ export const useLiveBars = ({
     }
 
     subscriptionRef.current = null
-    lastTradeTimestampMsRef.current = Number.NEGATIVE_INFINITY
+    lastLiveUpdateTimestampMsRef.current = Number.NEGATIVE_INFINITY
   }, [])
 
   const startLiveSubscription = useCallback(() => {
-    const liveProvider = providerId?.split('/')[0] as MarketLiveProvider | undefined
+    const liveProvider = providerId?.split('/')[0]
     if (!enabled || !liveProvider || !listing) return
-    if (liveProvider !== 'alpaca' && liveProvider !== 'finnhub') return
+    // Providers gate live data through their declared capability channels
+    // (see providers/market/*/config.ts). Subscribe to the channel this widget
+    // can actually consume, not to a hardcoded provider allowlist.
+    const liveCapabilities = getMarketLiveCapabilities(liveProvider)
+    const subscribeChannel = selectLiveSubscriptionChannel(liveCapabilities?.channels)
+    if (!subscribeChannel) return
     const socketInstance = socketRef.current
     if (!socketInstance) return
 
     stopLiveSubscription()
-    lastTradeTimestampMsRef.current = Number.NEGATIVE_INFINITY
+    lastLiveUpdateTimestampMsRef.current = Number.NEGATIVE_INFINITY
 
     const resolvedIntervalMs = intervalToMs(interval ?? undefined) ?? intervalMsRef.current
-    const subscribeChannel = 'trades'
 
     const aggregateLiveData = (data: NonNullable<ReturnType<typeof mapMarketBarToBarMs>>) => {
       if (!data || !resolvedIntervalMs) return data
@@ -238,7 +286,7 @@ export const useLiveBars = ({
     const handleMarketTrade = (payload: MarketTradeEvent) => {
       const current = subscriptionRef.current
       if (!current) return
-      if (payload?.channel && payload.channel !== 'trades') return
+      if (payload?.channel && payload.channel !== subscribeChannel) return
       if (payload.provider && payload.provider !== current.provider) return
       if (
         current.subscriptionId &&
@@ -265,8 +313,8 @@ export const useLiveBars = ({
       if (typeof latestOpenTime === 'number' && Number.isFinite(latestOpenTime)) {
         if (tradeTimestampMs < latestOpenTime) return
       }
-      if (tradeTimestampMs < lastTradeTimestampMsRef.current) return
-      lastTradeTimestampMsRef.current = tradeTimestampMs
+      if (tradeTimestampMs < lastLiveUpdateTimestampMsRef.current) return
+      lastLiveUpdateTimestampMsRef.current = tradeTimestampMs
       const volume =
         typeof trade.size === 'number' && Number.isFinite(trade.size) ? trade.size : undefined
 
@@ -280,10 +328,47 @@ export const useLiveBars = ({
       })
     }
 
+    // Polling providers (e.g. IBKR) never stream trades: they emit
+    // `market-quote-snapshot` on their declared 15s cadence. Adapt that
+    // snapshot into the same bar-apply path so the chart still ticks.
+    const handleMarketQuoteSnapshot = (payload: MarketQuoteSnapshotEvent) => {
+      const current = subscriptionRef.current
+      if (!current) return
+      if (payload?.channel && payload.channel !== subscribeChannel) return
+      if (payload.provider && payload.provider !== current.provider) return
+      if (
+        current.subscriptionId &&
+        payload.subscriptionId &&
+        payload.subscriptionId !== current.subscriptionId
+      ) {
+        return
+      }
+      if (
+        current.listing &&
+        payload.listing &&
+        !areListingIdentitiesEqual(payload.listing, current.listing)
+      ) {
+        return
+      }
+
+      const timestampMs = Date.now()
+      const latestOpenTime =
+        dataContext.barsMsRef.current[dataContext.barsMsRef.current.length - 1]?.openTime
+      if (typeof latestOpenTime === 'number' && Number.isFinite(latestOpenTime)) {
+        if (timestampMs < latestOpenTime) return
+      }
+      if (timestampMs < lastLiveUpdateTimestampMsRef.current) return
+
+      const bar = mapQuoteSnapshotToMarketBar(payload.snapshot, new Date(timestampMs).toISOString())
+      if (!bar) return
+      lastLiveUpdateTimestampMsRef.current = timestampMs
+      applyLiveBar(bar)
+    }
+
     const handleSubscribed = (payload: {
       subscriptionId?: string
       listing?: ListingIdentity
-      provider?: MarketLiveProvider
+      provider?: string
       interval?: string
     }) => {
       const current = subscriptionRef.current
@@ -322,6 +407,7 @@ export const useLiveBars = ({
     }
 
     socketInstance.on('market-trade', handleMarketTrade)
+    socketInstance.on('market-quote-snapshot', handleMarketQuoteSnapshot)
     socketInstance.on('market-subscribed', handleSubscribed)
     socketInstance.on('market-subscribe-error', handleSubscribeError)
     socketInstance.on('connect', handleConnect)
@@ -333,6 +419,7 @@ export const useLiveBars = ({
       interval: interval ?? undefined,
       cleanup: () => {
         socketInstance.off('market-trade', handleMarketTrade)
+        socketInstance.off('market-quote-snapshot', handleMarketQuoteSnapshot)
         socketInstance.off('market-subscribed', handleSubscribed)
         socketInstance.off('market-subscribe-error', handleSubscribeError)
         socketInstance.off('connect', handleConnect)
