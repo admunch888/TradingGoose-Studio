@@ -144,3 +144,61 @@ describe('handleMarketProviderRequest error responses', () => {
     expect(payload.error?.code).toBe('LISTING RESOLVE FAILED')
   })
 })
+
+/**
+ * A listing supplied BY IDENTITY (no catalogue row: measured for IBKR futures
+ * MES) has to survive the request boundary untouched - the provider is what
+ * decides whether the symbol resolves, and its own error is what the operator
+ * reads when it does not.
+ */
+describe('handleMarketProviderRequest listings supplied by identity', () => {
+  const manualListing = {
+    listing_id: 'MESZ26',
+    base_id: '',
+    quote_id: '',
+    listing_type: 'default' as const,
+    manual: { assetClass: 'future' as const, marketCode: 'CME' },
+  }
+
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    mocks.getSession.mockResolvedValue({ user: { id: 'user-1' } })
+    mocks.getEffectiveDecryptedEnv.mockResolvedValue({})
+  })
+
+  it('hands the manual identity to the provider exactly as the chart built it', async () => {
+    mocks.executeProviderRequest.mockResolvedValue({ bars: [] })
+
+    const response = await handleMarketRequest({ ...marketSeriesBody, listing: manualListing })
+
+    expect(response.status).toBe(200)
+    expect(mocks.executeProviderRequest).toHaveBeenCalledTimes(1)
+    expect(mocks.executeProviderRequest.mock.calls[0][1]).toMatchObject({ listing: manualListing })
+  })
+
+  it('surfaces the provider error for an unresolvable identity and charts nothing', async () => {
+    const { MarketProviderError } = await import('@/providers/market/errors')
+    // The real message IBKR produces for a contract month it does not list.
+    mocks.executeProviderRequest.mockRejectedValue(
+      new MarketProviderError({
+        code: 'PROVIDER ERROR',
+        message:
+          'MESZ25 is not a contract month IBKR offers for MES. Available: SEP26, DEC26. ' +
+          'December 2025 is in the past - the contract has expired.',
+        provider: 'ibkr',
+        status: 502,
+      })
+    )
+
+    const response = await handleMarketRequest({ ...marketSeriesBody, listing: manualListing })
+
+    expect(response.status).toBe(502)
+    const payload = (await response.json()) as {
+      error?: Record<string, unknown>
+      bars?: unknown[]
+    }
+    expect(payload.error?.message).toContain('Available: SEP26, DEC26')
+    expect(payload.bars).toBeUndefined()
+  })
+})

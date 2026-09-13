@@ -16,6 +16,12 @@ vi.mock('@/components/listing-selector/selector/resolve-request', () => ({
   requestListingResolution: requestListingResolutionMock,
 }))
 
+const fetchListingsMock = vi.hoisted(() => vi.fn(async () => [] as ListingResolved[]))
+
+vi.mock('@/lib/listing/search', () => ({
+  fetchListings: (...args: unknown[]) => fetchListingsMock(...args),
+}))
+
 vi.mock('@/hooks/workflow/use-accessible-reference-prefixes', () => ({
   useAccessibleReferencePrefixes: () => undefined,
 }))
@@ -174,5 +180,80 @@ describe('ListingSearchInput', () => {
     })
 
     expect(requestListingResolutionMock).not.toHaveBeenCalled()
+  })
+
+  it('offers the manual path when the catalogue returns nothing, and commits the typed symbol', async () => {
+    // The catalogue has no row for MES, so a futures chart is unreachable from
+    // search alone. candidateListings replaces the network search.
+    const onListingChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <ListingSearchInput
+          instanceId='manual-test'
+          candidateListings={[]}
+          onListingChange={onListingChange}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    const input = container.querySelector('input[name="listing-search-manual-test"]')
+    if (!input) throw new Error('Expected listing input')
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      valueSetter?.call(input, 'future: MESZ26')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => Promise.resolve())
+
+    const symbolField = container.querySelector<HTMLInputElement>('input[name="manual-listing-symbol"]')
+    const assetClassField = container.querySelector<HTMLSelectElement>(
+      'select[name="manual-listing-asset-class"]'
+    )
+    expect(symbolField?.value).toBe('MESZ26')
+    expect(assetClassField?.value).toBe('future')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+    })
+
+    expect(onListingChange).toHaveBeenCalledTimes(1)
+    expect(onListingChange.mock.calls[0][0].listingIdentity).toEqual({
+      listing_id: 'MESZ26',
+      base_id: '',
+      quote_id: '',
+      listing_type: 'default',
+      manual: { assetClass: 'future' },
+    })
+    expect(useListingSelectorStore.getState().instances['manual-test']).toMatchObject({
+      selectedListing: {
+        listingIdentity: {
+          listing_id: 'MESZ26',
+          listing_type: 'default',
+          manual: { assetClass: 'future' },
+        },
+      },
+    })
+  })
+
+  it('leaves the catalogue path untouched when the search returns rows', async () => {
+    await act(async () => {
+      root.render(
+        <ListingSearchInput instanceId='manual-test' candidateListings={[resolved('AAPL')]} />
+      )
+      await Promise.resolve()
+    })
+
+    const input = container.querySelector('input[name="listing-search-manual-test"]')
+    if (!input) throw new Error('Expected listing input')
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      valueSetter?.call(input, 'AAPL')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => Promise.resolve())
+
+    expect(container.querySelector('input[name="manual-listing-symbol"]')).toBeNull()
+    expect(container.textContent).toContain('AAPL')
   })
 })
