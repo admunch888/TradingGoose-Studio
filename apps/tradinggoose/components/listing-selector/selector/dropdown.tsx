@@ -17,6 +17,8 @@ type ListingSelectorDropdownContentProps = {
   results: ListingResolved[]
   busy: boolean
   error?: string
+  /** Set when the caller renders its own empty state (the manual listing entry). */
+  hideEmptyContent?: boolean
   highlightedIndex: number
   onHighlightChange: (index: number) => void
   onSelect: (listing: ListingResolved) => void
@@ -32,6 +34,7 @@ export function ListingSelectorDropdownContent({
   results,
   busy,
   error,
+  hideEmptyContent = false,
   highlightedIndex,
   onHighlightChange,
   onSelect,
@@ -80,7 +83,7 @@ export function ListingSelectorDropdownContent({
           if (listing) onSelect(listing)
         }}
         loadingContent={busy ? copy.searching : null}
-        emptyContent={error || copy.noListingsFound}
+        emptyContent={error || (hideEmptyContent ? null : copy.noListingsFound)}
       />
     </div>
   )

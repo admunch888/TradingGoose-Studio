@@ -21266,7 +21266,13 @@
         "searching": "Buscando...",
         "unableToLoadListings": "No se pudieron cargar los listados. Inténtalo de nuevo.",
         "noListingsFound": "No se encontraron listados.",
-        "searchPlaceholder": "Buscar listados..."
+        "searchPlaceholder": "Buscar listados...",
+        "manualHint": "¿No está en el catálogo? Proporciona el listado por identidad: el proveedor resuelve exactamente el símbolo que escribas, y nada más.",
+        "manualSymbol": "Símbolo",
+        "manualAssetClass": "Clase de activo",
+        "manualMarket": "Mercado (opcional)",
+        "manualUse": "Usar este listado",
+        "manualInvalid": "Se requieren un símbolo y una clase de activo."
       },
       "copilot": {
         "welcome": {

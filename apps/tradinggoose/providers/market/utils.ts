@@ -1,4 +1,4 @@
-import type { ListingIdentity } from '@/lib/listing/identity'
+import { getListingIdentitySymbol, type ListingIdentity } from '@/lib/listing/identity'
 import { resolveListingIdentity } from '@/lib/listing/resolve'
 import { createLogger } from '@/lib/logs/console/logger'
 import { MarketProviderError } from '@/providers/market/errors'
@@ -12,7 +12,32 @@ import type {
 
 const logger = createLogger('MarketProviderUtils')
 
+/**
+ * The context for a listing supplied BY IDENTITY.
+ *
+ * Such an identity is complete on its own: it names the asset class a
+ * catalogue row would have carried, so the catalogue is not consulted at all -
+ * not for the asset class, not for an icon, not for a timezone. Whatever the
+ * row would have added is genuinely absent here, and absent beats invented.
+ */
+const buildManualListingContext = (listing: ListingIdentity): ListingContext => ({
+  listing,
+  base: getListingIdentitySymbol(listing),
+  quote: undefined,
+  assetClass: listing.manual?.assetClass as AssetClass | undefined,
+  marketCode: listing.manual?.marketCode ?? undefined,
+  countryCode: undefined,
+  cityName: undefined,
+  timeZoneName: undefined,
+})
+
 export async function resolveListingContext(listing: ListingIdentity): Promise<ListingContext> {
+  // Checked before the catalogue call so a manual listing never depends on a
+  // catalogue that has nothing for it either way.
+  if (listing.manual) {
+    return buildManualListingContext(listing)
+  }
+
   let resolved: Awaited<ReturnType<typeof resolveListingIdentity>>
   try {
     resolved = await resolveListingIdentity(listing)

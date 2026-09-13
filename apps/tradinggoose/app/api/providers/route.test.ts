@@ -146,4 +146,22 @@ describe('POST /api/providers namespace resolution', () => {
     expect(mocks.handleAIProviderRequest).not.toHaveBeenCalled()
     expect(mocks.handleMarketProviderRequest).not.toHaveBeenCalled()
   })
+
+  it('carries a listing supplied by identity through unchanged', async () => {
+    // No catalogue row exists for IBKR futures MES, so the chart reaches the
+    // provider with the identity the operator authored - asset class included.
+    const manualListing = {
+      listing_id: 'MESZ26',
+      base_id: '',
+      quote_id: '',
+      listing_type: 'default',
+      manual: { assetClass: 'future', marketCode: 'CME' },
+    }
+
+    const response = await postRoute({ ...marketSeriesBody, listing: manualListing })
+
+    expect(response.status).toBe(200)
+    expect(mocks.handleMarketProviderRequest).toHaveBeenCalledTimes(1)
+    expect(mocks.handleMarketProviderRequest.mock.calls[0][0].body.listing).toEqual(manualListing)
+  })
 })
