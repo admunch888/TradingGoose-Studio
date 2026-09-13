@@ -5,11 +5,11 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPublicCopy } from '@/i18n/public-copy'
 import {
   GlobalCopilotContextProvider,
   useGlobalCopilotCurrentContext,
 } from '@/global-navbar/copilot-context'
+import { getPublicCopy } from '@/i18n/public-copy'
 import type { ChatContext } from '@/stores/copilot/types'
 import { workflowEditorWidget } from './index'
 

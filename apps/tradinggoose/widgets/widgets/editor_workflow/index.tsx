@@ -41,11 +41,17 @@ const WorkflowEditorWidgetBody = ({
   const dropdownCopy = useWorkflowDropdownMessages()
   const widgetKey = widget?.key ?? 'editor_workflow'
   const toolbarScopeId = readWorkflowToolbarScopeId(widgetKey, panelId)
-  const { resolvedWorkflowId, resolvedWorkflowName, hasLoadedWorkflows, loadError, isLoading, workflowIds } =
-    useWorkflowWidgetState({
-      workspaceId,
-      params,
-    })
+  const {
+    resolvedWorkflowId,
+    resolvedWorkflowName,
+    hasLoadedWorkflows,
+    loadError,
+    isLoading,
+    workflowIds,
+  } = useWorkflowWidgetState({
+    workspaceId,
+    params,
+  })
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null)
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
     setContainerElement((prev) => {
