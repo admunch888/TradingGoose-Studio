@@ -31,14 +31,16 @@ type MarketTradeEvent = {
   }
 }
 
+type MarketQuoteSnapshotPayload = {
+  lastPrice?: number | null
+}
+
 type MarketQuoteSnapshotEvent = {
   provider?: string
   channel?: string
   subscriptionId?: string
   listing?: ListingIdentity
-  snapshot?: {
-    lastPrice?: number | null
-  }
+  snapshot?: MarketQuoteSnapshotPayload
 }
 
 // Live channels the data chart can actually consume: `trades` arrives as
@@ -68,7 +70,7 @@ export const selectLiveSubscriptionChannel = (
  * into the current interval bucket, so open/high/low/close all start equal.
  */
 export const mapQuoteSnapshotToMarketBar = (
-  snapshot: MarketQuoteSnapshotEvent['snapshot'],
+  snapshot: MarketQuoteSnapshotPayload | null | undefined,
   timeStamp: string
 ): MarketBar | null => {
   const price = snapshot?.lastPrice
