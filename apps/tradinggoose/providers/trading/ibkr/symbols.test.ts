@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cacheIbkrConid, clearIbkrConidCache } from '@/providers/trading/ibkr/client'
 import {
   buildIbkrConidCacheKey,
+  ibkrSymbolCandidates,
   resolveIbkrConid,
   resolveIbkrConidFromApi,
   resolveIbkrConidSpec,
@@ -75,7 +76,42 @@ describe('resolveIbkrConid', () => {
   })
 })
 
+describe('ibkrSymbolCandidates', () => {
+  it('offers the marked futures form first, then the bare symbol', () => {
+    // What the catalogue actually produced: `FMES` with quote USD for a
+    // contract searched for as `MES`.
+    expect(ibkrSymbolCandidates('FMES', 'future')).toEqual(['FMES', 'MES'])
+    expect(ibkrSymbolCandidates('F*MES', 'future')).toEqual(['F*MES', 'MES'])
+  })
+
+  it('leaves a futures symbol that legitimately starts with F alone', () => {
+    // FDAX is a real future; stripping it would break a contract that works.
+    expect(ibkrSymbolCandidates('FDAX', 'future')).toEqual(['FDAX', 'DAX'])
+    expect(ibkrSymbolCandidates('F', 'future')).toEqual(['F'])
+  })
+
+  it('never strips for a non-futures asset class, because F is a real ticker', () => {
+    expect(ibkrSymbolCandidates('F', 'stock')).toEqual(['F'])
+    expect(ibkrSymbolCandidates('FMES', 'stock')).toEqual(['FMES'])
+    expect(ibkrSymbolCandidates('F', undefined)).toEqual(['F'])
+  })
+})
+
 describe('resolveIbkrConidFromApi', () => {
+  it('falls back to the bare symbol when the marked futures form does not match', async () => {
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([
+        { conid: '466221142', symbol: 'MES', sections: [{ secType: 'FUT' }] },
+      ] as never)
+
+    const resolution = await resolveIbkrConidFromApi({ symbol: 'FMES', assetClass: 'future' })
+
+    expect(resolution).toEqual({ conid: 466221142, conidSpec: 'FUT' })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(2)
+  })
+
   beforeEach(() => {
     clearIbkrConidCache()
     vi.mocked(fetchBrokerJson).mockReset()

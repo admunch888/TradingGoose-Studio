@@ -27,6 +27,30 @@ export const resolveIbkrConidSpec = (assetClass?: AssetClass | null): string =>
 export const buildIbkrConidCacheKey = (symbol: string, assetClass?: AssetClass | null): string =>
   `${resolveIbkrConidSpec(assetClass)}:${symbol.trim().toUpperCase()}`
 
+/**
+ * The listings catalogue is not IBKR's vocabulary. A futures contract arrives
+ * with a marker glued to the symbol - observed BOTH as `F*MES` and as `FMES`
+ * with quote USD, for a contract the operator searched for as `MES` - while
+ * IBKR's own contract search wants the bare symbol.
+ *
+ * So for FUTURES the marked form is tried FIRST and the stripped form second.
+ * The order matters and the restriction matters:
+ *  - a leading `F` is a legitimate ticker elsewhere (`F` is Ford), so nothing is
+ *    stripped for other asset classes;
+ *  - a real futures symbol can itself start with F (FDAX, FESX), so the marked
+ *    form must be attempted first and stripping only a fallback - never the
+ *    other way round, and never when the first attempt errors for a reason that
+ *    is not "no match".
+ */
+export const ibkrSymbolCandidates = (symbol: string, assetClass?: AssetClass | null): string[] => {
+  const normalized = symbol.trim().toUpperCase()
+  if (resolveIbkrConidSpec(assetClass) !== 'FUT') {
+    return [normalized]
+  }
+  const stripped = normalized.replace(/^F\*/, '').replace(/^F(?=[A-Z])/, '')
+  return stripped && stripped !== normalized ? [normalized, stripped] : [normalized]
+}
+
 interface SecDefSection {
   secType?: string
   exchange?: string
@@ -80,30 +104,6 @@ export async function resolveIbkrConidFromApi({
     throw new Error('IBKR hosted API requires an access token to resolve contracts')
   }
 
-  const searchParams = new URLSearchParams({ symbol: normalizedSymbol })
-  if (conidSpec !== 'STK') {
-    searchParams.set('secType', conidSpec)
-  }
-
-  const response = await fetchBrokerJson<
-    SecDefResponseItem[] | { contracts?: SecDefResponseItem[] }
-  >({
-    providerId: 'ibkr',
-    url: `${buildIbkrApiUrl('/iserver/secdef/search')}?${searchParams.toString()}`,
-    init: {
-      method: 'POST',
-      headers: {
-        ...buildIbkrAuthHeaders({ accessToken }),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ symbol: normalizedSymbol }),
-    },
-  })
-
-  // The live endpoint answers with a bare array; accept the wrapped shape too
-  // so a future/edge response cannot silently resolve to nothing.
-  const rows = Array.isArray(response) ? response : (response?.contracts ?? [])
-
   // Sec types live under `sections` on the real payload; the flat `secType`
   // field is kept for older shapes. A row matching no section is skipped.
   const matchesRequestedSpec = (row: SecDefResponseItem): boolean => {
@@ -114,16 +114,49 @@ export async function resolveIbkrConidFromApi({
     return sections.some((section) => (section?.secType ?? '').toUpperCase() === conidSpec)
   }
 
-  const contract = rows.find(matchesRequestedSpec)
+  let resolvedConid: number | undefined
 
-  const rawConid = contract?.conid
-  const conid = typeof rawConid === 'string' ? Number(rawConid) : rawConid
-  if (typeof conid !== 'number' || !Number.isFinite(conid)) {
+  for (const candidate of ibkrSymbolCandidates(normalizedSymbol, assetClass)) {
+    const searchParams = new URLSearchParams({ symbol: candidate })
+    if (conidSpec !== 'STK') {
+      searchParams.set('secType', conidSpec)
+    }
+
+    // A transport or auth failure throws straight out: retrying a session error
+    // with a different spelling would only hide the real cause.
+    const response = await fetchBrokerJson<
+      SecDefResponseItem[] | { contracts?: SecDefResponseItem[] }
+    >({
+      providerId: 'ibkr',
+      url: `${buildIbkrApiUrl('/iserver/secdef/search')}?${searchParams.toString()}`,
+      init: {
+        method: 'POST',
+        headers: {
+          ...buildIbkrAuthHeaders({ accessToken }),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ symbol: candidate }),
+      },
+    })
+
+    // The live endpoint answers with a bare array; accept the wrapped shape too
+    // so a future/edge response cannot silently resolve to nothing.
+    const rows = Array.isArray(response) ? response : (response?.contracts ?? [])
+    const rawConid = rows.find(matchesRequestedSpec)?.conid
+    const conid = typeof rawConid === 'string' ? Number(rawConid) : rawConid
+
+    if (typeof conid === 'number' && Number.isFinite(conid)) {
+      resolvedConid = conid
+      break
+    }
+  }
+
+  if (resolvedConid === undefined) {
     throw new Error(`Unable to resolve IBKR contract identifier for symbol ${normalizedSymbol}`)
   }
 
-  cacheIbkrConid(cacheKey, conid)
-  return { conid, conidSpec }
+  cacheIbkrConid(cacheKey, resolvedConid)
+  return { conid: resolvedConid, conidSpec }
 }
 
 /**
