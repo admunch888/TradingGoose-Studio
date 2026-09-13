@@ -425,15 +425,33 @@ export function createSSEHandlers(params: {
         const skipped: boolean = data?.result?.skipped === true
         if (!toolCallId) return
 
-        const targetState = success
-          ? ClientToolCallState.success
-          : failedDependency || skipped
-            ? ClientToolCallState.rejected
-            : ClientToolCallState.error
+        // A locally-executed server tool can stage a mutation for review: the
+        // frame carries the approval token instead of a written result. Enter
+        // the SAME review state the client-executed path enters
+        // (store.executeCopilotToolCall -> ClientToolCallState.review, which the
+        // Accept button then accepts via acceptCopilotServerToolReview).
+        // Ignoring these fields left the call in `success` with the staged
+        // mutation unapprovable.
+        const reviewResult =
+          data?.requiresReview === true && typeof data?.reviewToken === 'string'
+            ? {
+                ...(data.preview && typeof data.preview === 'object' ? data.preview : {}),
+                requiresReview: true,
+                reviewToken: data.reviewToken,
+              }
+            : undefined
+
+        const targetState = reviewResult
+          ? ClientToolCallState.review
+          : success
+            ? ClientToolCallState.success
+            : failedDependency || skipped
+              ? ClientToolCallState.rejected
+              : ClientToolCallState.error
 
         const { toolCallsById } = get()
         const current = toolCallsById[toolCallId]
-        const result = current?.result ?? data?.result ?? data?.data?.result
+        const result = reviewResult ?? current?.result ?? data?.result ?? data?.data?.result
         if (current) {
           if (isToolCallCompletionProtected(current.state)) {
             return
