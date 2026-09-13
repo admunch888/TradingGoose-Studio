@@ -84,13 +84,17 @@ export async function executeLocalCopilotServerTool(params: {
       | { requiresReview?: boolean; reviewToken?: string; reviewBaseStateHash?: unknown }
       | null
     if (maybeReview && maybeReview.requiresReview === true && maybeReview.reviewToken) {
-      // A staged mutation this path cannot accept: the caller is about to be told
-      // the tool succeeded while nothing was written. That used to happen silently
-      // for every mutation (the local runtime ran at 'limited').
-      logger.warn('Unaccepted server-tool review stripped; this mutation is NOT applied', {
-        toolName,
-      })
-      const { requiresReview: _r, reviewToken, reviewBaseStateHash: _h, ...rest } =
+      // A staged mutation: nothing has been written yet, and only an accepted
+      // review will write it. The caller (agent.ts) forwards the token on the
+      // tool_result frame so the browser can enter its review flow and accept
+      // it - see stores/copilot/streaming.ts. `reviewBaseStateHash` stays out of
+      // both the frame and the model's view of the result: it is server-side
+      // bookkeeping for the accept path.
+      logger.info('Server-tool review staged for user approval', { toolName })
+      // Read the token through the narrowed property: destructuring it from a
+      // cast left it `string | undefined` even under the guard above.
+      const reviewToken = maybeReview.reviewToken
+      const { requiresReview: _r, reviewToken: _t, reviewBaseStateHash: _h, ...rest } =
         maybeReview as Record<string, unknown> & {
           requiresReview?: boolean
           reviewToken?: string

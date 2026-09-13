@@ -351,6 +351,18 @@ export async function runLocalCopilotTurn(
             toolCallId,
             success: true,
             result: result.result ?? null,
+            // A staged mutation must reach the browser as a review, not as a
+            // plain success: the token is the only handle that can approve it
+            // (stores/copilot/streaming.ts -> store.executeCopilotToolCall ->
+            // acceptCopilotServerToolReview). Dropping these fields left the
+            // tool call in `success` with the review stranded.
+            ...(result.review
+              ? {
+                  requiresReview: true,
+                  reviewToken: result.review.reviewToken,
+                  preview: result.review.preview,
+                }
+              : {}),
           },
         })
       } else {
@@ -403,7 +415,17 @@ function buildToolResultContent(result: {
   }
 
   try {
-    return truncate(JSON.stringify({ ok: true, result: result.result ?? null }), 200_000)
+    return truncate(
+      JSON.stringify({
+        ok: true,
+        result: result.result ?? null,
+        // The system prompt tells the model to react to `requiresReview: true`
+        // (prompt.ts); without it the model reported a staged mutation as done.
+        // The token itself stays out: it is the user's approval handle.
+        ...(result.review ? { requiresReview: true } : {}),
+      }),
+      200_000
+    )
   } catch {
     return JSON.stringify({ ok: true, result: String(result.result) })
   }
