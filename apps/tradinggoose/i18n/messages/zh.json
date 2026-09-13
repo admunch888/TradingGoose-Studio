@@ -21253,7 +21253,13 @@
         "searching": "正在搜索...",
         "unableToLoadListings": "无法加载标的。请重试。",
         "noListingsFound": "未找到标的。",
-        "searchPlaceholder": "搜索标的..."
+        "searchPlaceholder": "搜索标的...",
+        "manualHint": "目录中没有该标的？可通过标识直接提供：提供方只会解析你输入的代码，不会替换为其他标的。",
+        "manualSymbol": "代码",
+        "manualAssetClass": "资产类别",
+        "manualMarket": "市场（可选）",
+        "manualUse": "使用此标的",
+        "manualInvalid": "需要填写代码和资产类别。"
       },
       "copilot": {
         "welcome": {

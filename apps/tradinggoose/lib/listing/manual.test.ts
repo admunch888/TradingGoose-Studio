@@ -96,8 +96,10 @@ describe('building a listing by identity', () => {
   })
 
   it('builds an identity whose symbol is the one typed, verbatim', () => {
+    // Trimmed, never upcased or rewritten: a provider resolves the symbol, and
+    // the app has no business changing it on the way there.
     expect(buildManualListingIdentity({ symbol: ' mesz26 ', assetClass: 'future' })).toEqual({
-      listing_id: 'MESZ26',
+      listing_id: 'mesz26',
       base_id: '',
       quote_id: '',
       listing_type: 'default',

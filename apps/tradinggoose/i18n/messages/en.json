@@ -21266,7 +21266,13 @@
         "searching": "Searching...",
         "unableToLoadListings": "Unable to load listings. Try again.",
         "noListingsFound": "No listings found.",
-        "searchPlaceholder": "Search listings..."
+        "searchPlaceholder": "Search listings...",
+        "manualHint": "Not in the catalogue? Supply the listing by identity - the provider resolves exactly the symbol you type, and nothing else.",
+        "manualSymbol": "Symbol",
+        "manualAssetClass": "Asset class",
+        "manualMarket": "Market (optional)",
+        "manualUse": "Use this listing",
+        "manualInvalid": "A symbol and an asset class are required."
       },
       "copilot": {
         "welcome": {

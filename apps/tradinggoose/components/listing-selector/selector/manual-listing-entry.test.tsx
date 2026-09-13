@@ -72,13 +72,13 @@ describe('ManualListingEntry', () => {
     expect(onUse).toHaveBeenCalledTimes(1)
     expect(onUse.mock.calls[0][0]).toMatchObject({
       listingIdentity: {
-        listing_id: 'MESZ26',
+        listing_id: 'mesz26',
         base_id: '',
         quote_id: '',
         listing_type: 'default',
         manual: { assetClass: 'future' },
       },
-      base: 'MESZ26',
+      base: 'mesz26',
       assetClass: 'future',
     })
   })
@@ -128,7 +128,7 @@ describe('ManualListingEntry', () => {
     expect(submit()?.disabled).toBe(false)
   })
 
-  it('says what the manual path is and is not, in the operator's own copy', async () => {
+  it('says what the manual path is and is not, in the copy the operator reads', async () => {
     await render({ initialSymbol: 'MESZ26', initialAssetClass: 'future' })
 
     expect(container.textContent).toContain(copy.manualHint)

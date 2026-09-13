@@ -1,10 +1,50 @@
 import { z } from 'zod'
+import { MARKET_ASSET_CLASSES } from '@/providers/market/types'
 
 const LISTING_TYPES = ['default', 'crypto', 'currency'] as const
 
 export type ListingType = (typeof LISTING_TYPES)[number]
 
 export const LISTING_IDENTITY_VALUE_TYPE = 'listingIdentity' as const
+
+/**
+ * The asset classes a listing supplied BY IDENTITY may name.
+ *
+ * Exactly the classes whose catalogue row is what carries their asset class,
+ * minus the pair families: a crypto or currency listing already states its
+ * base/quote codes and takes its details from the currency/crypto catalogues,
+ * so there is no symbol to supply by identity. Derived from the canonical list
+ * so a new asset class cannot be forgotten here.
+ */
+export const MANUAL_LISTING_ASSET_CLASSES = MARKET_ASSET_CLASSES.filter(
+  (assetClass) => assetClass !== 'crypto' && assetClass !== 'currency'
+)
+
+export type ManualListingAssetClass = (typeof MANUAL_LISTING_ASSET_CLASSES)[number]
+
+/**
+ * What a listing supplied by identity has to carry that its catalogue row
+ * would have carried: the asset class the provider picks its instrument type
+ * from (IBKR's secType is `FUT` only because the row said `future`), and
+ * optionally the venue, which scopes a symbol listed in several places.
+ *
+ * Its presence is the opt-in. It is what tells the provider to resolve the
+ * listing from the identity itself instead of the catalogue, so an identity
+ * without it keeps behaving exactly as before.
+ */
+export const ListingManualEntrySchema = z
+  .object({
+    assetClass: z.enum(
+      MANUAL_LISTING_ASSET_CLASSES as unknown as [
+        ManualListingAssetClass,
+        ...ManualListingAssetClass[],
+      ]
+    ),
+    marketCode: z.string().trim().min(1).optional(),
+  })
+  .strict()
+
+export type ListingManualEntry = z.infer<typeof ListingManualEntrySchema>
 
 export const LISTING_IDENTITY_JSON_SCHEMA = {
   type: 'object',
@@ -20,6 +60,24 @@ export const LISTING_IDENTITY_JSON_SCHEMA = {
       enum: LISTING_TYPES,
       description: 'Listing type.',
     },
+    manual: {
+      type: 'object',
+      description:
+        'Present when the listing is supplied by identity because the catalogue has no row for it. Sets the asset class the provider resolves the symbol with, and optionally the market. Omit for catalogue listings.',
+      properties: {
+        assetClass: {
+          type: 'string',
+          enum: MANUAL_LISTING_ASSET_CLASSES,
+          description: 'Asset class of the listing supplied by identity.',
+        },
+        marketCode: {
+          type: 'string',
+          description: 'Market the symbol trades on; empty when unknown.',
+        },
+      },
+      required: ['assetClass'],
+      additionalProperties: false,
+    },
   },
   required: ['listing_id', 'base_id', 'quote_id', 'listing_type'],
   additionalProperties: false,
@@ -31,6 +89,7 @@ export const ListingIdentitySchema = z
     base_id: z.string().trim(),
     quote_id: z.string().trim(),
     listing_type: z.enum(LISTING_TYPES),
+    manual: ListingManualEntrySchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -42,6 +101,13 @@ export const ListingIdentitySchema = z
         })
       }
       return
+    }
+
+    if (value.manual) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Only default listing identities may be supplied by identity',
+      })
     }
 
     if (value.listing_id || !value.base_id || !value.quote_id) {
@@ -98,12 +164,26 @@ export const areListingIdentitiesEqual = (
     left.listing_type === right.listing_type &&
     left.listing_id === right.listing_id &&
     left.base_id === right.base_id &&
-    left.quote_id === right.quote_id
+    left.quote_id === right.quote_id &&
+    getListingManualSignature(left.manual) === getListingManualSignature(right.manual)
   )
 }
 
-export const getListingIdentityKey = (listing: ListingIdentity) =>
-  `${listing.listing_type}|${listing.listing_id}|${listing.base_id}|${listing.quote_id}`
+/**
+ * A listing supplied by identity is a different listing from the catalogue
+ * listing that happens to share its symbol: the manual one carries an asset
+ * class the catalogue row would have carried, and the chart must reload when
+ * one is swapped for the other. Identities carrying no manual entry keep the
+ * key they have always had.
+ */
+const getListingManualSignature = (manual?: ListingManualEntry | null): string =>
+  manual ? `manual:${manual.assetClass}:${manual.marketCode ?? ''}` : ''
+
+export const getListingIdentityKey = (listing: ListingIdentity) => {
+  const signature = getListingManualSignature(listing.manual)
+  const base = `${listing.listing_type}|${listing.listing_id}|${listing.base_id}|${listing.quote_id}`
+  return signature ? `${base}|${signature}` : base
+}
 
 export const parseListingIdentityValueStrict = (value: unknown): ListingIdentity => {
   let parsedValue = value

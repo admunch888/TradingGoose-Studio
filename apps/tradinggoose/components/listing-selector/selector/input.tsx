@@ -1,7 +1,7 @@
 'use client'
 
 import type { ChangeEvent, FocusEvent, KeyboardEvent } from 'react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   triggerCryptoRankUpdate,
@@ -14,6 +14,7 @@ import {
   MarketListingRow,
 } from '@/components/listing-selector/listing/row'
 import { ListingSelectorDropdownContent } from '@/components/listing-selector/selector/dropdown'
+import { ManualListingEntry } from '@/components/listing-selector/selector/manual-listing-entry'
 import { requestListingResolution } from '@/components/listing-selector/selector/resolve-request'
 import { useMarketListingSearch } from '@/components/listing-selector/selector/use-listing-search'
 import { formatDisplayText } from '@/components/ui/formatted-text'
@@ -27,6 +28,7 @@ import {
   type ListingResolved,
   toListingValueObject,
 } from '@/lib/listing/identity'
+import { parseManualListingQuery, shouldOfferManualListing } from '@/lib/listing/manual'
 import { cn } from '@/lib/utils'
 import { useAccessibleReferencePrefixes } from '@/hooks/workflow/use-accessible-reference-prefixes'
 import { useWorkspaceWidgetsMessages } from '@/i18n/workspace-widget-hooks'
@@ -143,6 +145,36 @@ export function ListingSearchInput({
   const hideInputText = showRichOverlay || showTagOverlay || showPlaceholderOverlay
   const assetClassFilter =
     activeAssetClassFilterId === ALL_ASSET_CLASS_FILTER_ID ? null : activeAssetClassFilterId
+
+  const manualPrefill = useMemo(() => parseManualListingQuery(query), [query])
+  const offerManualListing =
+    showListingDropdown &&
+    shouldOfferManualListing({
+      query,
+      busy: searchBusy,
+      error,
+      resultCount: results.length,
+    })
+
+  /**
+   * Commit a listing authored by identity. It is not in the catalogue, so
+   * nothing catalogue-side is touched for it - no rank update, no hydration -
+   * and the identity the provider receives is the one authored here.
+   */
+  const commitManualListing = (listing: ListingResolved) => {
+    updateInstance(instanceId, {
+      selectedListing: listing,
+      query: getListingDisplaySymbol(listing),
+      results: [],
+      error: undefined,
+      isLoading: false,
+    })
+    setOpen(false)
+    setHighlightedIndex(-1)
+    setShowTags(false)
+    setVariableCommitted(false)
+    onListingChange?.(listing)
+  }
 
   const isVariableListingInput = (value: string) => value.trim().startsWith('<')
 
@@ -486,6 +518,7 @@ export function ListingSearchInput({
         results={results}
         busy={searchBusy}
         error={error}
+        hideEmptyContent={offerManualListing}
         highlightedIndex={highlightedIndex}
         onHighlightChange={setHighlightedIndex}
         onSelect={handleSelect}
@@ -493,6 +526,20 @@ export function ListingSearchInput({
         onWheelCapture={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
       />
+      {/*
+        The escape hatch, and only when the catalogue had nothing: a listing
+        authored by identity for a symbol the hosted catalogue carries no row
+        for. The key restarts the fields when the typed query changes, so the
+        prefill is the operator's own text and never a stale one.
+      */}
+      {offerManualListing ? (
+        <ManualListingEntry
+          key={`${manualPrefill.symbol}|${manualPrefill.assetClass ?? ''}`}
+          initialSymbol={manualPrefill.symbol}
+          initialAssetClass={manualPrefill.assetClass ?? null}
+          onUse={commitManualListing}
+        />
+      ) : null}
     </div>
   ) : null
 

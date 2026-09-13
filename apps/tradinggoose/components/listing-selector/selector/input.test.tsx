@@ -206,15 +206,19 @@ describe('ListingSearchInput', () => {
     })
     await act(async () => Promise.resolve())
 
-    const symbolField = container.querySelector<HTMLInputElement>('input[name="manual-listing-symbol"]')
-    const assetClassField = container.querySelector<HTMLSelectElement>(
+    // The picker dropdown is portaled to document.body once it has a position,
+    // so the manual fields are queried there.
+    const symbolField = document.querySelector<HTMLInputElement>(
+      'input[name="manual-listing-symbol"]'
+    )
+    const assetClassField = document.querySelector<HTMLSelectElement>(
       'select[name="manual-listing-asset-class"]'
     )
     expect(symbolField?.value).toBe('MESZ26')
     expect(assetClassField?.value).toBe('future')
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+      document.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
     })
 
     expect(onListingChange).toHaveBeenCalledTimes(1)
@@ -253,7 +257,7 @@ describe('ListingSearchInput', () => {
     })
     await act(async () => Promise.resolve())
 
-    expect(container.querySelector('input[name="manual-listing-symbol"]')).toBeNull()
-    expect(container.textContent).toContain('AAPL')
+    expect(document.querySelector('input[name="manual-listing-symbol"]')).toBeNull()
+    expect(document.body.textContent).toContain('AAPL')
   })
 })
