@@ -2,6 +2,7 @@ import { ChartBarIcon } from '@/components/icons/icons'
 import { LISTING_IDENTITY_VALUE_TYPE } from '@/lib/listing/identity'
 import type { BlockConfig, SubBlockConfig } from '@/blocks/types'
 import { AuthMode } from '@/blocks/types'
+import { requiredUserOnlyInput } from '@/blocks/utils'
 import {
   coerceMarketProviderParamValue,
   getMarketProviderParamCatalog,
@@ -413,20 +414,9 @@ export const HistoricalDataBlock: BlockConfig<HistoricalDataResponse> = {
     },
   },
   inputs: {
-    provider: {
-      type: 'string',
-      description: 'Market provider id',
-      required: true,
-      // User-only so a workflow missing a provider fails serialization, before dispatch.
-      visibility: 'user-only',
-    },
-    listing: {
-      type: LISTING_IDENTITY_VALUE_TYPE,
-      description: 'Structured listing payload',
-      required: true,
-      // User-only so a workflow missing a listing fails serialization, before dispatch.
-      visibility: 'user-only',
-    },
+    // User-only so a workflow missing either fails serialization, before dispatch.
+    provider: requiredUserOnlyInput('string', 'Market provider id'),
+    listing: requiredUserOnlyInput(LISTING_IDENTITY_VALUE_TYPE, 'Structured listing payload'),
     interval: { type: 'string', description: 'Series interval/timeframe' },
     window: {
       type: 'json',
