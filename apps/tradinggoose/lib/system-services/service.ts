@@ -163,6 +163,45 @@ export async function resolveSystemServiceSettingsConfig(
   return resolveSystemServiceSettings(serviceId)
 }
 
+/**
+ * Whether the operator actually SAVED a value for a setting, as opposed to the
+ * slot only carrying the catalog's default.
+ *
+ * `resolveSystemServiceSettings` answers with `field.defaultValue` when no row
+ * exists, so a resolver alone cannot tell "configured" from "about to talk to a
+ * built-in default nobody asked for". That difference is what a slot whose
+ * default host does not exist on the deployment needs: model discovery against
+ * it fails on every cycle and logs an error for a service that was never set up
+ * (see app/api/providers/ai/ollama/models/route.ts).
+ */
+export async function isSystemServiceSettingStored(
+  serviceId: string,
+  key: string
+): Promise<boolean> {
+  const definition = getSystemServiceDefinition(serviceId)
+  if (!definition) {
+    throw new SystemServiceValidationError(`Unknown system service "${serviceId}"`)
+  }
+  if (!isSystemServiceSettingKey(serviceId, key)) {
+    throw new SystemServiceValidationError(
+      `Unknown setting key "${key}" for service "${serviceId}"`
+    )
+  }
+
+  const rows = await db
+    .select({ value: systemServiceValue.value })
+    .from(systemServiceValue)
+    .where(
+      and(
+        eq(systemServiceValue.service, serviceId),
+        eq(systemServiceValue.kind, 'setting'),
+        eq(systemServiceValue.key, key)
+      )
+    )
+
+  return rows.some((row) => typeof row.value === 'string' && row.value.trim().length > 0)
+}
+
 export async function upsertSystemServiceConfig(input: {
   serviceId: string
   credentials: SystemServiceCredentialInput[]

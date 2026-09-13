@@ -1,4 +1,8 @@
-import { resolveSystemServiceConfig, resolveSystemServiceSettingsConfig } from './service'
+import {
+  isSystemServiceSettingStored,
+  resolveSystemServiceConfig,
+  resolveSystemServiceSettingsConfig,
+} from './service'
 
 type ServiceConfigRecord = Record<string, unknown>
 type ApiKeyConfig = { apiKey: string | null }
@@ -113,6 +117,18 @@ export const resolveMarketApiServiceConfig = createServiceResolver(
 export const resolveOllamaServiceConfig = createServiceResolver('ollama', (config) => ({
   baseUrl: asString(config.baseUrl) ?? 'http://localhost:11434',
 }))
+
+/**
+ * Whether the deployment actually saved an Ollama host.
+ *
+ * Ollama is the only AI service slot whose resolver substitutes a built-in
+ * default host, so a slot nobody configured still looks usable and every
+ * discovery cycle talks to a host that may not exist. Callers use this to skip
+ * that cycle instead of logging a connection error for an unconfigured service
+ * (see app/api/providers/ai/ollama/models/route.ts).
+ */
+export const isOllamaServiceConfigured = (): Promise<boolean> =>
+  isSystemServiceSettingStored('ollama', 'baseUrl')
 
 export const resolveVllmServiceConfig = createServiceResolver('vllm', readApiKeyAndBaseUrlConfig)
 

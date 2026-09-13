@@ -257,4 +257,35 @@ describe('system services service', () => {
       },
     ])
   })
+
+  it('reports a setting as stored only when the operator actually saved a value', async () => {
+    const { isSystemServiceSettingStored } = await import('./service')
+
+    mockSelectWhere.mockResolvedValueOnce([{ value: 'http://localhost:11434' }])
+    await expect(isSystemServiceSettingStored('browserbase', 'projectId')).resolves.toBe(true)
+  })
+
+  it('reports an untouched slot - catalog default only - as not stored', async () => {
+    const { isSystemServiceSettingStored } = await import('./service')
+
+    // No row at all: resolveSystemServiceSettings would still answer with the
+    // catalog's defaultValue, which is exactly the case that must not be read
+    // as "the operator configured this service".
+    mockSelectWhere.mockResolvedValueOnce([])
+    await expect(isSystemServiceSettingStored('browserbase', 'projectId')).resolves.toBe(false)
+
+    mockSelectWhere.mockResolvedValueOnce([{ value: '   ' }])
+    await expect(isSystemServiceSettingStored('browserbase', 'projectId')).resolves.toBe(false)
+  })
+
+  it('rejects an unknown service or setting key', async () => {
+    const { SystemServiceValidationError, isSystemServiceSettingStored } = await import('./service')
+
+    await expect(isSystemServiceSettingStored('nope', 'projectId')).rejects.toBeInstanceOf(
+      SystemServiceValidationError
+    )
+    await expect(isSystemServiceSettingStored('browserbase', 'baseUrl')).rejects.toBeInstanceOf(
+      SystemServiceValidationError
+    )
+  })
 })
