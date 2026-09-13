@@ -317,20 +317,168 @@ const sectionMonths = (section: SecDefSection): string[] => {
     .filter((token) => IBKR_CONTRACT_MONTH_TOKEN.test(token))
 }
 
-const IBKR_MONTH_LABELS = [
-  'JAN',
-  'FEB',
-  'MAR',
-  'APR',
-  'MAY',
-  'JUN',
-  'JUL',
-  'AUG',
-  'SEP',
-  'OCT',
-  'NOV',
-  'DEC',
-]
+const IBKR_MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const
+
+/**
+ * The three-letter month a section's `months` writes (`DEC25`), derived from the
+ * calendar name so the two can never drift apart.
+ */
+const IBKR_MONTH_LABELS = IBKR_MONTH_NAMES.map((name) => name.slice(0, 3).toUpperCase())
+
+/**
+ * A contract month in the `MMMYY` form a section's `months` uses, split into the
+ * calendar month (0-11) and the two-digit year it carries.
+ */
+const parseIbkrContractMonth = (month: string): { monthIndex: number; year: string } | null => {
+  const match = /^([A-Z]{3})(\d{2})$/.exec(normalizeListingToken(month))
+  if (!match) {
+    return null
+  }
+  const monthIndex = IBKR_MONTH_LABELS.indexOf(match[1])
+  return monthIndex < 0 ? null : { monthIndex, year: match[2] }
+}
+
+/**
+ * The calendar year a two-digit contract year names: the one in the century
+ * nearest `now`.
+ *
+ * Two digits cannot say which century on their own - the same ambiguity
+ * expandFuturesYearDigits resolves for a catalogue symbol's year - and the
+ * nearest candidate is the only reading that keeps a message sensible: `Z25`
+ * written in 2026 is December 2025, not December 1925 or December 2125.
+ */
+const nearestContractYear = (twoDigitYear: string, now: Date): number => {
+  const currentYear = now.getUTCFullYear()
+  const century = Math.floor(currentYear / 100) * 100
+  return [century - 100, century, century + 100]
+    .map((base) => base + Number(twoDigitYear))
+    .reduce((nearest, candidate) =>
+      Math.abs(candidate - currentYear) < Math.abs(nearest - currentYear) ? candidate : nearest
+    )
+}
+
+/**
+ * A contract month as a person reads it: `DEC25` -> `December 2025`. The code is
+ * what the API and the listing catalogue speak; a calendar month is what an
+ * operator who was handed `MESZ25` needs in order to act.
+ */
+const describeIbkrContractMonth = (month: string, now: Date): string | null => {
+  const parsed = parseIbkrContractMonth(month)
+  if (!parsed) {
+    return null
+  }
+  return `${IBKR_MONTH_NAMES[parsed.monthIndex]} ${nearestContractYear(parsed.year, now)}`
+}
+
+/**
+ * Whether a contract month is already behind `now`. The month `now` is IN is
+ * still tradeable, so only a strictly earlier month has expired.
+ */
+const isIbkrContractMonthInThePast = (month: string, now: Date): boolean => {
+  const parsed = parseIbkrContractMonth(month)
+  if (!parsed) {
+    return false
+  }
+  return (
+    nearestContractYear(parsed.year, now) * 12 + parsed.monthIndex <
+    now.getUTCFullYear() * 12 + now.getUTCMonth()
+  )
+}
+
+/**
+ * The contract months IBKR lists for a sec type across a search response, in
+ * the order IBKR sent them and with no duplicates.
+ *
+ * The live payload answers a futures root with ONE row carrying the FUT
+ * section, so in practice this is that section's own `months`, verbatim and in
+ * IBKR's order. When several rows do carry the section (one root, several
+ * listings) every list is reported rather than one listing's slice, because the
+ * question the message answers - which months does IBKR offer for this root? -
+ * is not scoped to a venue the caller may never have named.
+ *
+ * Only what the response carried is reported: nothing is sorted, and nothing is
+ * added that IBKR did not send.
+ */
+const listedContractMonths = (rows: SecDefResponseItem[], secType: string): string[] => {
+  const months: string[] = []
+  for (const row of rows) {
+    const sections = Array.isArray(row?.sections) ? row.sections : []
+    for (const section of sections) {
+      if ((section?.secType ?? '').toUpperCase() !== secType) {
+        continue
+      }
+      for (const month of sectionMonths(section)) {
+        if (!months.includes(month)) {
+          months.push(month)
+        }
+      }
+    }
+  }
+  return months
+}
+
+/**
+ * Why a request for one contract month failed, in the terms the caller used.
+ *
+ * `Unable to resolve IBKR contract identifier for symbol MESZ25` restated the
+ * request and told the operator nothing: not whether the symbol was wrong, not
+ * which contracts exist, and not that the one asked for had expired ten months
+ * earlier - the difference between a stale listing and a bad request, which is
+ * the only thing they can act on. IBKR's own list answers it, and the calendar
+ * month says which kind of absence it is: a month before today has EXPIRED,
+ * while a month still ahead of today is simply one IBKR does not offer.
+ *
+ * Nothing but the months IBKR sent is carried into the message - no payload, no
+ * URL, no conid - so it stays one sentence an operator can read.
+ */
+const buildUnlistedContractMonthMessage = ({
+  requestedToken,
+  root,
+  availableMonths,
+  requestedMonth,
+  now,
+}: {
+  requestedToken: string
+  root: string
+  availableMonths: string[]
+  requestedMonth: string
+  now: Date
+}): string => {
+  const calendarMonth = describeIbkrContractMonth(requestedMonth, now) ?? requestedMonth
+  const reason = isIbkrContractMonthInThePast(requestedMonth, now)
+    ? `${calendarMonth} is in the past - the contract has expired.`
+    : `${calendarMonth} has not expired - IBKR does not offer that contract month.`
+  return (
+    `${requestedToken} is not a contract month IBKR offers for ${root}. ` +
+    `Available: ${availableMonths.join(', ')}. ` +
+    reason
+  )
+}
+
+/**
+ * What a search response said about a contract month none of its sections
+ * offered. Collected rather than thrown so the failure is reported once, after
+ * every candidate spelling has been tried.
+ */
+interface IbkrUnlistedContractMonth {
+  /** The root as IBKR names it (the row's `symbol`), which is what a caller recognises. */
+  root: string
+  /** The months IBKR listed, in IBKR order, deduplicated. */
+  availableMonths: string[]
+}
 
 /**
  * A caller's expiry in the `MMMYY` form /iserver/secdef/info takes as `month`.
@@ -467,11 +615,18 @@ export async function resolveIbkrConidFromApi({
   assetClass,
   context,
   accessToken,
+  now = new Date(),
 }: {
   symbol: string
   assetClass?: AssetClass | null
   context?: IbkrConidListingContext | null
   accessToken?: string
+  /**
+   * The clock a requested contract month is judged against. Injected rather
+   * than read from the ambient one so an expiry message can be tested without
+   * rotting, exactly as parseIbkrFuturesContractMonth takes it.
+   */
+  now?: Date
 }): Promise<IbkrConidResolution> {
   const normalizedSymbol = symbol.trim().toUpperCase()
   if (!normalizedSymbol) {
@@ -482,7 +637,7 @@ export async function resolveIbkrConidFromApi({
   // A catalogue symbol can carry its contract month (`MESZ25`). It is split off
   // here so the key is the root plus the month (see buildIbkrConidCacheKey) and
   // the search asks for the root (see ibkrSymbolCandidates).
-  const contractMonth = parseIbkrFuturesContractMonth(normalizedSymbol, assetClass)
+  const contractMonth = parseIbkrFuturesContractMonth(normalizedSymbol, assetClass, now)
   const cacheKey = buildIbkrConidCacheKey(normalizedSymbol, assetClass, context)
   const cachedConid = getCachedIbkrConid(cacheKey)
   if (cachedConid !== undefined) {
@@ -572,6 +727,13 @@ export async function resolveIbkrConidFromApi({
     ibkrRowExchangeTokens(row).some((token) => requestedExchanges.includes(token))
 
   let resolvedConid: number | undefined
+  /**
+   * What IBKR listed when the requested contract month was not among it. It is
+   * recorded from the first response that carries a section for the requested
+   * sec type without the month, and the failure below reports it instead of
+   * restating the request.
+   */
+  let unlistedContractMonth: IbkrUnlistedContractMonth | undefined
 
   for (const candidate of ibkrSymbolCandidates(normalizedSymbol, assetClass)) {
     const searchParams = new URLSearchParams({ symbol: candidate })
@@ -599,6 +761,27 @@ export async function resolveIbkrConidFromApi({
     // The live endpoint answers with a bare array; accept the wrapped shape too
     // so a future/edge response cannot silently resolve to nothing.
     const rows = Array.isArray(response) ? response : (response?.contracts ?? [])
+
+    /**
+     * The month that was asked for is not a month IBKR lists. Remember what it
+     * DOES list before the section filter drops every row: a section's `months`
+     * is the only place that answer exists, and by the failure below it is gone.
+     */
+    if (requestedContractMonth && !unlistedContractMonth) {
+      const availableMonths = listedContractMonths(rows, conidSpec)
+      if (availableMonths.length > 0 && !availableMonths.includes(requestedContractMonth)) {
+        const rootRow = rows.find((row) =>
+          (Array.isArray(row?.sections) ? row.sections : []).some(
+            (section) => (section?.secType ?? '').toUpperCase() === conidSpec
+          )
+        )
+        unlistedContractMonth = {
+          root: normalizeListingToken(rootRow?.symbol) || contractMonth?.root || normalizedSymbol,
+          availableMonths,
+        }
+      }
+    }
+
     const specMatches = rows
       .map((row) => ({ row, section: matchRequestedSection(row) }))
       .filter((match) => match.section !== undefined)
@@ -657,6 +840,28 @@ export async function resolveIbkrConidFromApi({
   }
 
   if (resolvedConid === undefined) {
+    /**
+     * A month IBKR does not list is not a resolution failure of the same kind
+     * as a symbol that matched nothing: there IS a contract for the root, just
+     * not for the expiry asked about, and IBKR's own `months` list says which
+     * expiries exist. Report that, with the calendar month, so the operator can
+     * tell an expired listing from a wrong request.
+     *
+     * The requested token is the SYMBOL when the symbol itself carried the
+     * month (`MESZ25`, what a listing dropdown hands over), and the month token
+     * (`DEC25`) when the caller supplied the month instead.
+     */
+    if (unlistedContractMonth && requestedContractMonth) {
+      throw new Error(
+        buildUnlistedContractMonthMessage({
+          requestedToken: contractMonth ? normalizedSymbol : requestedContractMonth,
+          root: unlistedContractMonth.root,
+          availableMonths: unlistedContractMonth.availableMonths,
+          requestedMonth: requestedContractMonth,
+          now,
+        })
+      )
+    }
     throw new Error(`Unable to resolve IBKR contract identifier for symbol ${normalizedSymbol}`)
   }
 

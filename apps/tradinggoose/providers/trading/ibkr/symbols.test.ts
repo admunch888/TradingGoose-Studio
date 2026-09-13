@@ -106,6 +106,74 @@ const mesSemicolonMonthsRows = [
 ]
 
 /**
+ * The REAL POST /iserver/secdef/search body for `symbol=MES`, captured from the
+ * user's live Client Portal Gateway.
+ *
+ * Its FUT section lists `SEP26;DEC26;MAR27;JUN27;SEP27` - SEMICOLON separated,
+ * on CME, and with NO December 2025. That absence is the user-visible failure:
+ * the listing dropdown offered `MESZ25` ten months after that contract expired,
+ * and every market request for it died on a message that named neither IBKR's
+ * list nor the reason.
+ *
+ * The two rows below the first share the symbol `MES` (a Mitsubishi stock and a
+ * bond) and carry no FUT section, which is what makes the first row's FUT
+ * section the only one. Their identifiers were not captured because no
+ * assertion here depends on them; they are reproduced only as far as the
+ * ground truth states.
+ */
+const mesLiveSearchRows = [
+  {
+    conid: '362673777',
+    companyHeader: 'Micro E-Mini S&P 500 Stock Price Index - CME',
+    symbol: 'MES',
+    description: 'CME',
+    restricted: 'IND',
+    sections: [
+      { secType: 'IND', exchange: 'CME;' },
+      {
+        secType: 'FUT',
+        months: 'SEP26;DEC26;MAR27;JUN27;SEP27',
+        exchange: 'CME',
+        showPrips: true,
+      },
+      { secType: 'FOP', months: 'SEP26;OCT26;NOV26;DEC26', exchange: 'CME', showPrips: true },
+      { secType: 'BAG', exchange: 'CME', legSecType: 'FUT' },
+      { secType: 'BAG', exchange: 'CME', legSecType: 'FOP' },
+    ],
+  },
+  { symbol: 'MES', description: 'TSE', sections: [{ secType: 'STK' }] },
+  { symbol: null, sections: [{ secType: 'BOND' }] },
+]
+
+/**
+ * The REAL
+ * GET /iserver/secdef/info?conid=362673777&sectype=FUT&month=DEC26&exchange=CME
+ * body, captured from the same gateway: a BARE ARRAY of ONE contract, carrying
+ * the contract's OWN conid (not the underlying's), its maturity and multiplier.
+ */
+const mesLiveDec26InfoRows = [
+  {
+    conid: 815824257,
+    symbol: 'MES',
+    secType: 'FUT',
+    exchange: 'CME',
+    listingExchange: 'CME',
+    currency: 'USD',
+    desc1: "Dec18'26(5)",
+    desc2: null,
+    maturityDate: '20261218',
+    multiplier: '5',
+    tradingClass: 'MES',
+    validExchanges: 'CME',
+    showPrips: true,
+    right: '?',
+    strike: 0.0,
+    coupon: 'No Coupon',
+    cusip: null,
+  },
+]
+
+/**
  * GET /iserver/secdef/info for one contract month: a BARE ARRAY of contracts.
  * A neighbouring root can come back in the same answer, and one month can be
  * listed on several venues, so the pick has to be deterministic rather than
@@ -705,11 +773,122 @@ describe('resolveIbkrConidFromApi', () => {
         symbol: 'MESZ99',
         assetClass: 'future',
         context: { marketCode: 'XCME', currency: 'USD' },
+        now: new Date('2026-09-15T00:00:00Z'),
       })
-    ).rejects.toThrow('Unable to resolve IBKR contract identifier for symbol MESZ99')
+    ).rejects.toThrow(
+      'MESZ99 is not a contract month IBKR offers for MES. ' +
+        'Available: SEP26, DEC25, MAR26, DEC26.'
+    )
     // No section offers DEC99, so there is no contract to look up: the hop is
     // never attempted and the first FUT section is not accepted instead.
     expect(secDefInfoUrls()).toEqual([])
+  })
+
+  it('names the contract months IBKR offers, in IBKR order, when the requested one is absent', async () => {
+    // The user-visible failure, against the REAL gateway payload. The earlier
+    // stages are right and stay: the ROOT `MES` is what secdef/search is asked
+    // for (#27) and `Z25` is read off the symbol as `DEC25`. What failed is that
+    // IBKR's FUT section offers no December 2025, and the message said only
+    // "Unable to resolve IBKR contract identifier for symbol MESZ25" - no list,
+    // no reason, nothing an operator could act on.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesLiveSearchRows, { DEC26: mesLiveDec26InfoRows })
+
+    const error = (await resolveIbkrConidFromApi({
+      symbol: 'MESZ25',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+      now: new Date('2026-09-15T00:00:00Z'),
+    }).catch((thrown: Error) => thrown)) as Error
+
+    expect(error.message).toBe(
+      'MESZ25 is not a contract month IBKR offers for MES. ' +
+        'Available: SEP26, DEC26, MAR27, JUN27, SEP27. ' +
+        'December 2025 is in the past - the contract has expired.'
+    )
+    // One sentence, not a payload: nothing IBKR sent is quoted back beyond the
+    // months themselves, so no search row, conid or JSON punctuation leaks.
+    expect(error.message).not.toMatch(/[{}[\]"]/)
+    expect(error.message).not.toContain('362673777')
+    expect(error.message).not.toContain('conid')
+
+    // The list is reported as IBKR sent it, and a month IBKR does not list is
+    // never looked up: the hop does not run.
+    expect(secDefInfoUrls()).toEqual([])
+    expect(vi.mocked(fetchBrokerJson).mock.calls[0]?.[0]?.url ?? '').toContain('symbol=MES')
+  })
+
+  it('converts the month code to a calendar month, and says expired only for a month in the past', async () => {
+    // `Z25` is a code an operator has to look up; `December 2025` is not. The
+    // SAME code path has to tell the two kinds of absence apart, because the
+    // operator's next move is different: an expired contract means the listing
+    // is stale, while an unlisted future month means the request is wrong.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesLiveSearchRows, { DEC26: mesLiveDec26InfoRows })
+    const now = new Date('2026-09-15T00:00:00Z')
+    const context = { marketCode: 'XCME', currency: 'USD' }
+
+    // Z25 -> December 2025, ten months behind the clock.
+    await expect(
+      resolveIbkrConidFromApi({ symbol: 'MESZ25', assetClass: 'future', context, now })
+    ).rejects.toThrow(
+      'MESZ25 is not a contract month IBKR offers for MES. ' +
+        'Available: SEP26, DEC26, MAR27, JUN27, SEP27. ' +
+        'December 2025 is in the past - the contract has expired.'
+    )
+
+    // Q27 -> August 2027 is still AHEAD of the clock and equally absent from
+    // the list, so it must not be called expired.
+    await expect(
+      resolveIbkrConidFromApi({ symbol: 'MESQ27', assetClass: 'future', context, now })
+    ).rejects.toThrow(
+      'MESQ27 is not a contract month IBKR offers for MES. ' +
+        'Available: SEP26, DEC26, MAR27, JUN27, SEP27. ' +
+        'August 2027 has not expired - IBKR does not offer that contract month.'
+    )
+  })
+
+  it('still resolves a contract month IBKR does offer, through the hop to its own conid', async () => {
+    // DEC26 IS in the live section, so nothing about this path changed: the
+    // request goes out for the ROOT, the section's `months` picks the month, and
+    // /iserver/secdef/info answers with the contract's OWN conid (815824257),
+    // not the underlying's (362673777).
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesLiveSearchRows, { DEC26: mesLiveDec26InfoRows })
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'MESZ26',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+      now: new Date('2026-09-15T00:00:00Z'),
+    })
+
+    expect(resolution).toEqual({ conid: 815824257, conidSpec: 'FUT' })
+    expect(vi.mocked(fetchBrokerJson).mock.calls[0]?.[0]?.url ?? '').toContain('symbol=MES')
+    const [infoUrl] = secDefInfoUrls()
+    expect(infoUrl).toContain('conid=362673777')
+    expect(infoUrl).toContain('sectype=FUT')
+    expect(infoUrl).toContain('month=DEC26')
+    expect(infoUrl).toContain('exchange=CME')
+  })
+
+  it('leaves a root-only lookup untouched: no month, no list, no hop', async () => {
+    // The row's own conid IS the answer when no contract month was requested,
+    // exactly as before - and there is nothing for the new message to describe,
+    // because nothing was asked of it.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesLiveSearchRows, { DEC26: mesLiveDec26InfoRows })
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+      now: new Date('2026-09-15T00:00:00Z'),
+    })
+
+    expect(resolution).toEqual({ conid: 362673777, conidSpec: 'FUT' })
+    expect(secDefInfoUrls()).toEqual([])
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
   })
 
   it('still resolves the marked futures forms from #15, with no contract month and no hop', async () => {
