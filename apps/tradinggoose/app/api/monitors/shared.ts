@@ -34,7 +34,7 @@ import {
   resolveTradingProviderContext,
   resolveTradingProviderSelectedAccount,
 } from '@/lib/trading/context'
-import { isTradingServiceError } from '@/lib/trading/errors'
+import { isTradingServiceError, resolveTradingErrorStatus } from '@/lib/trading/errors'
 
 type WebhookRow = typeof webhook.$inferSelect
 
@@ -247,7 +247,10 @@ export const resolvePortfolioMonitorAccount = async ({
     }
   } catch (error) {
     if (isTradingServiceError(error)) {
-      throw new MonitorRequestError(error.message, error.status)
+      // A trading error's status is a broker status, and 0 for a transport
+      // failure; MonitorRequestError.status is sent as-is by the route, so it has
+      // to be an HTTP status before it is copied.
+      throw new MonitorRequestError(error.message, resolveTradingErrorStatus(error.status))
     }
     throw error
   }

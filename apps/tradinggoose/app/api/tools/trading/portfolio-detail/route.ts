@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
 import { createLogger } from '@/lib/logs/console/logger'
-import { isTradingServiceError } from '@/lib/trading/errors'
+import { isTradingServiceError, resolveTradingErrorStatus } from '@/lib/trading/errors'
 import {
   getTradingPortfolioDetail,
   type TradingPortfolioDetailRequest,
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     logger.error(`[${requestId}] Failed to fetch portfolio detail`, { error: message })
     return NextResponse.json(
       { success: false, error: { message } },
-      { status: isTradingServiceError(error) ? error.status : 500 }
+      { status: isTradingServiceError(error) ? resolveTradingErrorStatus(error.status) : 500 }
     )
   }
 }

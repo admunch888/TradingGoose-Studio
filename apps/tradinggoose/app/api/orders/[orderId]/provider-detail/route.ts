@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
 import { createLogger } from '@/lib/logs/console/logger'
-import { isTradingServiceError } from '@/lib/trading/errors'
+import { isTradingServiceError, resolveTradingErrorStatus } from '@/lib/trading/errors'
 import {
   getRecordedTradingOrderProviderDetail,
   type TradingProviderOrderDetailResponse,
@@ -40,7 +40,10 @@ export async function POST(
     return NextResponse.json({ data: providerDetail } satisfies TradingProviderOrderDetailResponse)
   } catch (error) {
     if (isTradingServiceError(error)) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
+      return NextResponse.json(
+        { error: error.message },
+        { status: resolveTradingErrorStatus(error.status) }
+      )
     }
     logger.error(`[${requestId}] Failed to fetch provider order detail`, { error })
     return NextResponse.json({ error: 'Failed to fetch provider order detail' }, { status: 500 })

@@ -8,6 +8,7 @@ import {
   authorizeTradingConnectionRequest,
   resolveTradingProviderContext,
 } from '@/lib/trading/context'
+import { TradingServiceError } from '@/lib/trading/errors'
 import { executeTradingProviderOrderDetailRequest } from '@/providers/trading'
 import { TradingBrokerRequestError } from '@/providers/trading/portfolio-utils'
 
@@ -111,6 +112,19 @@ vi.mock('@/lib/utils', () => ({
 vi.mock('@/providers/trading', () => ({
   executeTradingProviderOrderDetailRequest: vi.fn(),
 }))
+
+// The real resolver stays in charge for the tests that exercise the broker path;
+// this handle only lets one test hand the route the error shape it must survive.
+vi.mock('@/lib/trading/order-detail', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/trading/order-detail')>()
+  return {
+    ...actual,
+    getRecordedTradingOrderProviderDetail: vi.fn(
+      (...args: Parameters<typeof actual.getRecordedTradingOrderProviderDetail>) =>
+        actual.getRecordedTradingOrderProviderDetail(...args)
+    ),
+  }
+})
 
 const orderRow = {
   id: 'order-1',
@@ -277,5 +291,26 @@ describe('order provider detail route', () => {
 
     expect(response.status).toBe(502)
     await expect(response.json()).resolves.toEqual({ error: 'Broker request failed' })
+  })
+
+  it('answers a trading status that is not an HTTP status with a valid 502', async () => {
+    const orderDetail = await import('@/lib/trading/order-detail')
+    vi.mocked(orderDetail.getRecordedTradingOrderProviderDetail).mockRejectedValueOnce(
+      new TradingServiceError('Broker request failed for alpaca: Unable to connect', 0)
+    )
+    const { POST } = await import('./route')
+
+    const response = await POST(
+      new NextRequest(
+        'http://localhost/api/orders/order-1/provider-detail?workspaceId=workspace-1',
+        { method: 'POST' }
+      ),
+      { params: Promise.resolve({ orderId: 'order-1' }) }
+    )
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error: 'Broker request failed for alpaca: Unable to connect',
+    })
   })
 })
