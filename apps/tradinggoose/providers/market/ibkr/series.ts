@@ -1,12 +1,12 @@
 import { createLogger } from '@/lib/logs/console/logger'
 import { ibkrMarketProviderConfig } from '@/providers/market/ibkr/config'
+import { fetchIbkrMarketJson } from '@/providers/market/ibkr/pacing'
 import type { MarketBar, MarketSeries, MarketSeriesRequest } from '@/providers/market/types'
 import { resolveListingContext, resolveProviderSymbol } from '@/providers/market/utils'
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
 import { buildIbkrApiUrl } from '@/providers/trading/ibkr/client'
 import { ensureIbkrSession } from '@/providers/trading/ibkr/session'
 import { resolveIbkrConidFromApi } from '@/providers/trading/ibkr/symbols'
-import { fetchBrokerJson } from '@/providers/trading/portfolio-utils'
 
 const logger = createLogger('MarketProvider:IBKR')
 
@@ -149,10 +149,14 @@ export async function fetchIbkrSeries(request: MarketSeriesRequest): Promise<Mar
 
   logger.info('Fetching IBKR market series', { symbol, conid, bar, period })
 
-  const response = await fetchBrokerJson<IbkrHistoryResponse>({
-    providerId: 'ibkr',
+  // Paced behind the shared gateway queue and retried on 429/503: a large
+  // lookback (300-500 daily bars) arriving while the chart poll is running is
+  // exactly the burst the gateway refuses, and a refusal must wait rather than
+  // fail the run. READ-ONLY - see providers/market/ibkr/pacing.ts.
+  const response = await fetchIbkrMarketJson<IbkrHistoryResponse>({
     url,
     init: { method: 'GET', headers: buildIbkrAuthHeaders({ accessToken }) },
+    label: 'history',
   })
 
   if (response?.error) {
