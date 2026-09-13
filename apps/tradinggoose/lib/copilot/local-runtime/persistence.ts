@@ -1,8 +1,7 @@
-import { db } from '@tradinggoose/db'
+import { copilotReviewItems, db } from '@tradinggoose/db'
 import { and, asc, desc, eq, like, notLike } from 'drizzle-orm'
-import { copilotReviewItems, copilotReviewSessions } from '@tradinggoose/db'
-import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-messages'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
+import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-messages'
 
 /**
  * Persistence for the local Copilot runtime's model working history.
@@ -394,19 +393,13 @@ export async function appendLocalAssistantText(
 }
 
 /**
- * Recovers the runtime model for a session from the stored item/session state.
- * Used by mark-complete, which the client sends without a model.
+ * Normalizes a stored session model to the bare runtime model name.
+ *
+ * mark-complete receives no model from the client, so callers recover the value
+ * from the session row they have already loaded and verified as owned instead of
+ * looking the session up by id alone.
  */
-export async function readLocalSessionModelFromMessage(
-  reviewSessionId: string
-): Promise<string | null> {
-  const [session] = await db
-    .select({ model: copilotReviewSessions.model })
-    .from(copilotReviewSessions)
-    .where(eq(copilotReviewSessions.id, reviewSessionId))
-    .limit(1)
-
-  const model = session?.model
+export function toLocalRuntimeModelName(model: string | null | undefined): string | null {
   if (!model) return null
   return model.startsWith(LOCAL_COPILOT_MODEL_PREFIX)
     ? model.slice(LOCAL_COPILOT_MODEL_PREFIX.length)

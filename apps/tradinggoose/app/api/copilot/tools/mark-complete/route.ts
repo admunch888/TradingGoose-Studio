@@ -1,25 +1,27 @@
+import { copilotReviewItems, db } from '@tradinggoose/db'
+import { eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import {
   authenticateCopilotRequestSessionOnly,
   createBadRequestResponse,
   createInternalServerErrorResponse,
+  createNotFoundResponse,
   createRequestTracker,
   createUnauthorizedResponse,
 } from '@/lib/copilot/auth'
 import { mirrorLocalCopilotCompletionUsageReports } from '@/lib/copilot/completion-usage-billing'
+import { handleLocalCopilotContinuation } from '@/lib/copilot/local-runtime/chat-handler'
+import {
+  persistLocalContinuation,
+  toLocalRuntimeModelName,
+} from '@/lib/copilot/local-runtime/persistence'
+import { isCopilotLocalRuntimeModel } from '@/lib/copilot/local-runtime/runtime-models'
+import { loadReviewSessionForUser } from '@/lib/copilot/review-sessions/permissions'
+import { COPILOT_SESSION_KIND } from '@/lib/copilot/session-scope'
 import { createLogger } from '@/lib/logs/console/logger'
 import { encodeSSE, SSE_HEADERS } from '@/lib/utils'
 import { getCopilotApiUrl, proxyCopilotRequest } from '@/app/api/copilot/proxy'
-import {
-  persistLocalContinuation,
-  readLocalSessionModelFromMessage,
-} from '@/lib/copilot/local-runtime/persistence'
-import { isCopilotLocalRuntimeModel } from '@/lib/copilot/local-runtime/runtime-models'
-import { handleLocalCopilotContinuation } from '@/lib/copilot/local-runtime/chat-handler'
-import { db } from '@tradinggoose/db'
-import { copilotReviewItems } from '@tradinggoose/db'
-import { eq } from 'drizzle-orm'
 
 const logger = createLogger('CopilotMarkToolCompleteAPI')
 const DATA_PREFIX = 'data: '
@@ -184,9 +186,28 @@ export async function POST(req: NextRequest) {
       const reviewSessionId =
         typeof parsed.data?.reviewSessionId === 'string' ? parsed.data.reviewSessionId : undefined
 
+      // The session id arrives in a caller-supplied body and the local branch
+      // reads the stored working history into a model call before writing tool
+      // results and model output back into the session's review items, so it
+      // must be authorized here (CWE-639). The 404 mirrors /api/copilot/chat so
+      // a session owned by someone else is indistinguishable from a missing one.
+      const ownedSession = reviewSessionId
+        ? await loadReviewSessionForUser(reviewSessionId, userId)
+        : null
+
+      if (reviewSessionId && (!ownedSession || ownedSession.entityKind !== COPILOT_SESSION_KIND)) {
+        logger.warn(`[${tracker.requestId}] Local mark-complete for unauthorized session`, {
+          toolCallId: parsed.id,
+          toolName: parsed.name,
+        })
+        return createNotFoundResponse('Review session not found or unauthorized')
+      }
+
+      // mark-complete carries no model, so it is recovered from the session row
+      // that was just verified as owned rather than read back by id alone.
       const sessionModel =
-        reviewSessionId && (await isLocalReviewSession(reviewSessionId))
-          ? await readLocalSessionModel(reviewSessionId)
+        ownedSession && (await isLocalReviewSession(ownedSession.id))
+          ? toLocalRuntimeModelName(ownedSession.model)
           : null
 
       if (reviewSessionId && sessionModel && isCopilotLocalRuntimeModel(sessionModel)) {
@@ -297,7 +318,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
 /** True when the session belongs to the local runtime (working-state rows exist). */
 async function isLocalReviewSession(reviewSessionId: string): Promise<boolean> {
   const rows = await db
@@ -306,12 +326,4 @@ async function isLocalReviewSession(reviewSessionId: string): Promise<boolean> {
     .where(eq(copilotReviewItems.sessionId, reviewSessionId))
     .limit(200)
   return rows.some((row) => typeof row.itemId === 'string' && row.itemId.startsWith('local_'))
-}
-
-/**
- * Recovers the model for the conversation. The client does not send a model on
- * mark-complete, so the value persisted for the session is used.
- */
-async function readLocalSessionModel(reviewSessionId: string): Promise<string | null> {
-  return readLocalSessionModelFromMessage(reviewSessionId)
 }
