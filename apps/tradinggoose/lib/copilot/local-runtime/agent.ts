@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import { getLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
-import type { LocalAgentTurnParams } from '@/lib/copilot/local-runtime/types'
+import type { LocalAgentTurnParams, LocalSseEventSink } from '@/lib/copilot/local-runtime/types'
 import { withTimeout } from '@/lib/copilot/local-runtime/with-timeout'
 import {
   buildLocalWorkingMessages,
@@ -14,13 +14,16 @@ import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
 const logger = createLogger('LocalCopilotAgent')
 
 /**
- * Tools whose implementation only exists in the browser. When the model calls
- * one of these the local loop halts and hands control back to the client, which
- * executes the tool and resumes via `/api/copilot/tools/mark-complete`.
+ * Tools whose implementation only exists in the browser. They ARE offered to
+ * the model and must stay in that schema: the system prompt tells the model to
+ * call them (prompt.ts), and they are the only tools with no server
+ * implementation, so the loop can safely hand them back to the client. When the
+ * model calls one, the loop emits its `response.output_item.done` function_call
+ * frame and halts; the browser executes it and resumes via
+ * `/api/copilot/tools/mark-complete`.
  *
  * Must stay in sync with the `clientTool(...)` entries in
- * `stores/copilot/tool-registry.ts` — they are the only tools with no server
- * implementation, so offering them to the model is safe.
+ * `stores/copilot/tool-registry.ts`.
  */
 export const LOCAL_CLIENT_ONLY_TOOLS = new Set([
   'run_workflow',
@@ -74,8 +77,12 @@ function stripModelPrefix(model: string): string {
 function buildOpenAiTools(
   manifestTools: Array<{ name: string; description?: string; parameters?: unknown }>
 ): OpenAiTool[] {
+  // Client-only tools are deliberately NOT filtered out here. The model can
+  // only call a tool it was offered, so hiding them made the entire browser
+  // handoff (`awaiting_tools` -> mark-complete -> continuation) unreachable even
+  // though the prompt instructs the model to use them.
   return manifestTools
-    .filter((tool) => tool?.name && !LOCAL_CLIENT_ONLY_TOOLS.has(tool.name))
+    .filter((tool) => tool?.name)
     .map((tool) => ({
       type: 'function' as const,
       function: {
@@ -104,6 +111,41 @@ async function createLocalClient() {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}\n…[truncated]` : value
+}
+
+/** Id shared by the assistant tool_calls entry, the result and the handoff. */
+function resolveToolCallId(call: { id: string; index: number }): string {
+  return call.id || `call_${call.index}`
+}
+
+/**
+ * Emits the `response.output_item.done` function_call frame the browser needs to
+ * execute a tool.
+ *
+ * `applyStreamedFunctionCallItem` (stores/copilot/streaming.ts) is the only
+ * writer of `context.pendingAutoExecutionToolCallIds`, the sole input to
+ * `executeAutomaticToolCall` — so ANY tool handed to the client must carry this
+ * frame, including a client-only call the loop halts on. Emitting it only inside
+ * the execution loop left the browser with `awaiting_tools` and no call to run.
+ */
+function emitFunctionCallFrame(
+  sink: LocalSseEventSink,
+  call: { id: string; name: string; arguments: string; index: number }
+): string {
+  const toolCallId = resolveToolCallId(call)
+  sink.send({
+    event: 'response.output_item.done',
+    data: {
+      item: {
+        type: 'function_call',
+        id: toolCallId,
+        call_id: toolCallId,
+        name: call.name,
+        arguments: call.arguments || '{}',
+      },
+    },
+  })
+  return toolCallId
 }
 
 function formatContextBlock(file: { filename?: string; mediaType?: string; content?: string }) {
@@ -236,34 +278,26 @@ export async function runLocalCopilotTurn(
     workingMessages.push(toolCallsMessage)
     await hooks.onAssistantToolCalls?.(toolCallsMessage)
 
-    // Client-only tool -> stop and let the browser run it.
+    // Client-only tool -> hand the call to the browser and stop.
+    //
+    // The function_call frame MUST be emitted here, before the halt: the browser
+    // only learns which tool to run from `response.output_item.done`
+    // (streaming.ts), so returning `awaiting` alone left the turn waiting for a
+    // tool call the client never saw.
     const clientOnly = orderedCalls.find((call) => LOCAL_CLIENT_ONLY_TOOLS.has(call.name))
     if (clientOnly) {
       return {
         text: fullText,
         workingMessages,
         awaiting: {
-          toolCallId: clientOnly.id || `call_${clientOnly.index}`,
+          toolCallId: emitFunctionCallFrame(sink, clientOnly),
           toolName: clientOnly.name,
         },
       }
     }
 
     for (const call of orderedCalls) {
-      const toolCallId = call.id || `call_${call.index}`
-
-      sink.send({
-        event: 'response.output_item.done',
-        data: {
-          item: {
-            type: 'function_call',
-            id: toolCallId,
-            call_id: toolCallId,
-            name: call.name,
-            arguments: call.arguments || '{}',
-          },
-        },
-      })
+      const toolCallId = emitFunctionCallFrame(sink, call)
 
       let payload: unknown = {}
       try {
