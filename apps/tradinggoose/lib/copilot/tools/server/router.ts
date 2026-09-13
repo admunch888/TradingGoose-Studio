@@ -11,6 +11,7 @@ import {
   throwIfServerToolAborted,
   withWorkspaceArgContext,
 } from '@/lib/copilot/tools/server/base-tool'
+import { buildContextDerivedToolArgs } from '@/lib/copilot/tools/server/context-entity-targets'
 import { editLayoutServerTool } from '@/lib/copilot/tools/server/dashboard-layout/edit-layout'
 import { editWidgetServerTool } from '@/lib/copilot/tools/server/dashboard-layout/edit-widget'
 import { searchDocumentationServerTool } from '@/lib/copilot/tools/server/docs/search-documentation'
@@ -329,20 +330,21 @@ export async function routeExecution(
   try {
     args = ServerToolArgSchemas[toolName].parse(payload ?? {})
   } catch (error) {
-    if (
-      context?.workspaceId &&
-      (!payload || (typeof payload === 'object' && !Array.isArray(payload)))
-    ) {
-      const payloadWithContextWorkspace = {
+    // Some tool arguments belong to the execution context rather than the model:
+    // the active workspace, and - for the tools that target the turn's open
+    // entity - that entity's id (context-entity-targets.ts). Retry once with
+    // those filled in; if the payload is still invalid, surface the original
+    // error unchanged.
+    const contextArgs = buildContextDerivedToolArgs(toolName, payload, context)
+    if (Object.keys(contextArgs).length === 0) {
+      throw error
+    }
+    try {
+      args = ServerToolArgSchemas[toolName].parse({
         ...((payload as Record<string, unknown> | null | undefined) ?? {}),
-        workspaceId: context.workspaceId,
-      }
-      try {
-        args = ServerToolArgSchemas[toolName].parse(payloadWithContextWorkspace)
-      } catch {
-        throw error
-      }
-    } else {
+        ...contextArgs,
+      })
+    } catch {
       throw error
     }
   }

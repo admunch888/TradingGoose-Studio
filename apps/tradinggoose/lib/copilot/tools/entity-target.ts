@@ -18,9 +18,25 @@ export function resolveOptionalCopilotEntityId(
 
 export function requireCopilotEntityId(
   args: CopilotEntityTargetArgs | null | undefined,
-  options?: { toolName?: string }
+  options?: {
+    toolName?: string
+    /**
+     * Execution context to fall back to when the model supplied no id (the
+     * local runtime's in-process tools, and the managed runtime's
+     * `/api/copilot/execute-copilot-server-tool` route, both carry the open
+     * entity there). Only consulted together with `entityKind`, and only when
+     * the context's entity kind matches it: an id belonging to another kind must
+     * never be used to target this tool's entity.
+     */
+    context?: CopilotEntityExecutionContext | null
+    entityKind?: ReviewEntityKind
+  }
 ): string {
-  const entityId = resolveOptionalCopilotEntityId(args)
+  const entityId =
+    resolveOptionalCopilotEntityId(args) ??
+    (options?.entityKind
+      ? resolveCopilotContextEntityId(options.context, options.entityKind)
+      : undefined)
   if (entityId) {
     return entityId
   }

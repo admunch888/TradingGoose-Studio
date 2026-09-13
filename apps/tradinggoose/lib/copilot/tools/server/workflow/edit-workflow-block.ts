@@ -1,3 +1,4 @@
+import { ENTITY_KIND_WORKFLOW } from '@/lib/copilot/review-sessions/types'
 import { StructuredServerToolError } from '@/lib/copilot/server-tool-errors'
 import { requireCopilotEntityId } from '@/lib/copilot/tools/entity-target'
 import type {
@@ -19,7 +20,8 @@ import {
 } from './workflow-mutation-utils'
 
 interface EditWorkflowBlockParams {
-  entityId: string
+  /** Optional: falls back to the open workflow in the execution context. */
+  entityId?: string
   blockId: string
   blockType?: string
   name?: string
@@ -57,7 +59,11 @@ export const editWorkflowBlockServerTool: BaseServerTool<EditWorkflowBlockParams
   ): Promise<any> {
     const logger = createLogger('EditWorkflowBlockServerTool')
     const { blockId, blockType, name, enabled, subBlocks } = params
-    const workflowId = requireCopilotEntityId(params, { toolName: 'edit_workflow_block' })
+    const workflowId = requireCopilotEntityId(params, {
+      toolName: 'edit_workflow_block',
+      context,
+      entityKind: ENTITY_KIND_WORKFLOW,
+    })
 
     if (!blockId?.trim()) {
       throw new Error('blockId is required')

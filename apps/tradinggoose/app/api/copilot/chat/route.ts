@@ -53,6 +53,7 @@ import {
   COPILOT_RUNTIME_CONFIG_PLACEHOLDER,
   COPILOT_SESSION_KIND,
 } from '@/lib/copilot/session-scope'
+import { buildTurnProvenanceFromContexts } from '@/lib/copilot/tool-provenance'
 import { createLogger } from '@/lib/logs/console/logger'
 import { CopilotFiles } from '@/lib/uploads'
 import { createFileContent } from '@/lib/uploads/utils/file-utils'
@@ -918,6 +919,16 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     if (isLocalCopilotModel(model)) {
+      // Local turns execute server tools in-process, so the turn provenance the
+      // managed client derives from its contexts (stores/copilot/store.ts ->
+      // buildTurnProvenanceFromContexts) has to be derived here, from the SAME
+      // contexts, or the tools have no idea which workflow is open. Derived,
+      // never defaulted: no context means no provenance, and the tools keep
+      // requiring an explicit id instead of editing a guessed workflow.
+      const localTurnProvenance = buildTurnProvenanceFromContexts(
+        contexts as ChatContext[] | undefined,
+        activeWorkspaceId
+      )
       return handleLocalCopilotChat({
         model,
         message,
@@ -927,6 +938,8 @@ export async function POST(req: NextRequest) {
         conversationId: effectiveConversationId,
         workspaceId: activeWorkspaceId,
         userId: authenticatedUserId,
+        contextEntityKind: localTurnProvenance?.contextEntityKind,
+        contextEntityId: localTurnProvenance?.contextEntityId,
         contexts: agentContexts,
         fileContents: processedFileContents,
         fileAttachments,
