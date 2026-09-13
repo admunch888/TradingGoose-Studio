@@ -3,6 +3,7 @@ import type {
   AdminSystemService,
   AdminSystemServicesSnapshot,
 } from '@/lib/admin/system-services/types'
+import { resetUnconfiguredProviderSlots } from '@/stores/providers/store'
 
 const ADMIN_SERVICES_ENDPOINT = '/api/admin/services'
 
@@ -125,6 +126,10 @@ export async function saveAdminService(
         : 'Failed to save services'
     throw new Error(message)
   }
+
+  // A saved service may have just become configured (or lost its config), so the
+  // model-discovery skip recorded for an unconfigured slot is no longer valid.
+  resetUnconfiguredProviderSlots()
 
   return normalizeSnapshot(payload)
 }

@@ -10,6 +10,7 @@ import {
   handleMarketProviderRequest,
   type MarketProviderRouteBody,
 } from '@/app/api/providers/market/handler'
+import { getMarketProviderDefinition } from '@/providers/market/providers'
 
 const logger = createLogger('ProvidersAPI')
 
@@ -37,7 +38,8 @@ export async function POST(request: NextRequest) {
 
     const { namespace, providerId } = resolveProviderNamespace(
       provider,
-      providerNamespace ?? providerType
+      providerNamespace ?? providerType,
+      body
     )
 
     if (!providerId) {
@@ -103,9 +105,13 @@ export async function POST(request: NextRequest) {
 
 function resolveProviderNamespace(
   provider: string | undefined,
-  explicit?: ProviderNamespace
+  explicit: ProviderNamespace | undefined,
+  body: ProviderRouteBody
 ): { namespace: ProviderNamespace; providerId: string } {
-  if (!provider) {
+  // A non-string provider used to reach `provider.includes(...)` and throw out of
+  // the route, replacing the request's own error with a runtime message. It now
+  // answers the 400 the empty-provider case already gets.
+  if (typeof provider !== 'string' || !provider) {
     return { namespace: explicit ?? 'ai', providerId: '' }
   }
 
@@ -124,5 +130,33 @@ function resolveProviderNamespace(
     }
   }
 
+  // A request with no namespace field is resolved from its own body, never by
+  // defaulting to 'ai'. The old silent default let a market request (a dropped
+  // `providerNamespace`, or a caller that only ever sent a market provider id)
+  // fall into the AI handler, which answered with AI errors - "Model is
+  // required" reached a market chart's error state that way. Two market signals
+  // are enough to be certain: the provider is registered as a market provider,
+  // or the body carries a listing, which no AI request has.
+  if (isMarketProviderId(provider) || hasMarketRequestShape(body)) {
+    return { namespace: 'market', providerId: provider }
+  }
+
   return { namespace: 'ai', providerId: provider }
+}
+
+/**
+ * Market provider ids are a disjoint set from AI provider ids, so an exact
+ * registry hit is decisive. The suffix after a '/' picks the sub-provider
+ * (`ibkr/...`), mirroring providers/market/index.ts.
+ */
+function isMarketProviderId(provider: string): boolean {
+  const id = provider.split('/')[0]
+  return Boolean(id) && getMarketProviderDefinition(id) !== null
+}
+
+function hasMarketRequestShape(body: ProviderRouteBody): boolean {
+  const candidate = body as { listing?: unknown; kind?: unknown; windows?: unknown }
+  if (candidate.listing != null) return true
+  if (candidate.kind === 'series' || candidate.kind === 'live') return true
+  return Array.isArray(candidate.windows)
 }

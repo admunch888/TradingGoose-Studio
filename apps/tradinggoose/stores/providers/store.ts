@@ -12,6 +12,59 @@ import type { ProviderConfig, ProviderName, ProvidersStore } from './types'
 const logger = createLogger('ProvidersStore')
 let hasBootstrappedProviderModels = false
 
+// Slots the server reported as unconfigured (`configured: false`). Their model
+// endpoints answer with an empty list without contacting anything, so re-asking
+// on every page load is pure noise - and it was the loop that logged a
+// connection error for the unconfigured Ollama slot on the deployed box. The
+// observation survives a reload (sessionStorage) so a browsing session stops
+// asking, and it is dropped the moment an admin saves that service.
+const UNCONFIGURED_SLOTS_STORAGE_KEY = 'tradinggoose:unconfigured-provider-slots'
+const unconfiguredProviderSlots = new Set<ProviderName>()
+
+const readStoredUnconfiguredSlots = (): ProviderName[] => {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.sessionStorage.getItem(UNCONFIGURED_SLOTS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((value): value is ProviderName => typeof value === 'string')
+  } catch (_error) {
+    return []
+  }
+}
+
+const isProviderSlotUnconfigured = (provider: ProviderName) => {
+  if (unconfiguredProviderSlots.has(provider)) return true
+  if (!readStoredUnconfiguredSlots().includes(provider)) return false
+  unconfiguredProviderSlots.add(provider)
+  return true
+}
+
+const markProviderSlotUnconfigured = (provider: ProviderName) => {
+  unconfiguredProviderSlots.add(provider)
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(
+      UNCONFIGURED_SLOTS_STORAGE_KEY,
+      JSON.stringify(Array.from(unconfiguredProviderSlots))
+    )
+  } catch (_error) {
+    // Storage being unavailable only costs a repeated (cheap) request.
+  }
+}
+
+/** Called when a service is saved: the slot may have just become configured. */
+export function resetUnconfiguredProviderSlots() {
+  unconfiguredProviderSlots.clear()
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.removeItem(UNCONFIGURED_SLOTS_STORAGE_KEY)
+  } catch (_error) {
+    // Nothing to clear if storage is unavailable.
+  }
+}
+
 const PROVIDER_CONFIGS: Record<ProviderName, ProviderConfig> = {
   base: {
     apiEndpoint: '/api/providers/ai/base/models',
@@ -53,7 +106,9 @@ const resolveApiEndpoint = (endpoint: string): string => {
   }
 }
 
-const fetchProviderModels = async (provider: ProviderName): Promise<string[]> => {
+const fetchProviderModels = async (
+  provider: ProviderName
+): Promise<{ models: string[]; configured: boolean }> => {
   try {
     const config = PROVIDER_CONFIGS[provider]
     const apiEndpoint = resolveApiEndpoint(config.apiEndpoint)
@@ -65,16 +120,20 @@ const fetchProviderModels = async (provider: ProviderName): Promise<string[]> =>
         statusText: response.statusText,
         apiEndpoint,
       })
-      return []
+      return { models: [], configured: true }
     }
 
     const data = await response.json()
-    return data.models || []
+    return {
+      models: data.models || [],
+      // Only the model routes that know about an unconfigured slot send this.
+      configured: data.configured !== false,
+    }
   } catch (error) {
     logger.warn(`Error fetching ${provider} models`, {
       error: error instanceof Error ? error.message : 'Unknown error',
     })
-    return []
+    return { models: [], configured: true }
   }
 }
 
@@ -115,6 +174,11 @@ export const useProvidersStore = create<ProvidersStore>((set, get) => ({
       return
     }
 
+    if (isProviderSlotUnconfigured(provider)) {
+      logger.info(`${provider} model fetch skipped: the service slot is not configured`)
+      return
+    }
+
     const currentState = get().providers[provider]
     if (currentState.isLoading) {
       logger.info(`${provider} model fetch already in progress`)
@@ -134,7 +198,11 @@ export const useProvidersStore = create<ProvidersStore>((set, get) => ({
     }))
 
     try {
-      const models = await fetchProviderModels(provider)
+      const { models, configured } = await fetchProviderModels(provider)
+      if (!configured) {
+        markProviderSlotUnconfigured(provider)
+        logger.info(`${provider} service slot is not configured; skipping further fetches`)
+      }
       logger.info(`Successfully fetched ${provider} models`, {
         count: models.length,
         ...(provider === 'ollama' ? { models } : {}),
