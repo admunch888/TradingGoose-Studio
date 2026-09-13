@@ -162,7 +162,7 @@ export function logForecastError(
       ? (error as { code: string }).code
       : 'UNKNOWN'
 
-  logger.error('Kronos forecast failed', sanitizeToLog({
+  logger.error('Kronos forecast failed', sanitizeForLog({
     requestId,
     errorCode: code,
     errorMessage: message,
