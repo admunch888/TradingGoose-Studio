@@ -64,9 +64,9 @@ const mesFutureRows = [
  * One futures root across several contract months, in the shape the live
  * secdef/search answered with. `MESZ25` is the Micro E-mini S&P the market
  * listing dropdown supplies for December 2025: the search endpoint only knows
- * the ROOT `MES`, and a section's `months` - `MMMYY`, sometimes several per
- * row - is the only thing that tells contract months apart. A month none of
- * these rows offers must fail rather than fall back to the first FUT section.
+ * the ROOT `MES`, and a section's `months` - `MMMYY`, SEMICOLON separated - is
+ * what tells contract months apart. A month none of these rows offers must fail
+ * rather than fall back to the first FUT section.
  */
 const mesContractMonthRows = [
   {
@@ -79,7 +79,7 @@ const mesContractMonthRows = [
     conid: '515151515',
     symbol: 'MES',
     description: 'CME',
-    sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC25,MAR26' }],
+    sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC25;MAR26' }],
   },
   {
     conid: '606060606',
@@ -88,6 +88,59 @@ const mesContractMonthRows = [
     sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC26' }],
   },
 ]
+
+/**
+ * ONE row listing SEVERAL contract months the way IBKR documents them, in the
+ * only delimiter the live payload uses - a semicolon. PR #22 split a section's
+ * `months` on a comma, so this whole string became a single token that could
+ * never equal a requested month, every section was ruled out, and the lookup
+ * failed live with "Unable to resolve IBKR contract identifier".
+ */
+const mesSemicolonMonthsRows = [
+  {
+    conid: '466221142',
+    symbol: 'MES',
+    description: 'CME',
+    sections: [{ secType: 'FUT', exchange: 'CME', months: 'SEP26;DEC26;MAR27' }],
+  },
+]
+
+/**
+ * GET /iserver/secdef/info for one contract month: a BARE ARRAY of contracts.
+ * A neighbouring root can come back in the same answer, and one month can be
+ * listed on several venues, so the pick has to be deterministic rather than
+ * "the first row in the array".
+ */
+const mesDec25InfoRows = [
+  { conid: '111111111', symbol: 'ES', secType: 'FUT', exchange: 'CME' },
+  { conid: '495492861', symbol: 'MES', secType: 'FUT', exchange: 'SMART' },
+  { conid: '495492863', symbol: 'MES', secType: 'FUT', exchange: 'CME' },
+]
+
+/**
+ * Answer both secdef endpoints from one mock: the search rows for
+ * /iserver/secdef/search, and `infoByMonth[<month>]` for the
+ * /iserver/secdef/info hop. Keying the info answer on the `month` parameter is
+ * also how a test proves a section's `months` list was parsed into the
+ * individual month that was requested.
+ */
+const mockSecDefByMonth = (search: unknown, infoByMonth: Record<string, unknown>): void => {
+  vi.mocked(fetchBrokerJson).mockImplementation(
+    async ({ url }: { url: string }): Promise<never> => {
+      if (url.includes('/iserver/secdef/info')) {
+        const month = /month=([A-Z]{3}\d{2})/.exec(url)?.[1] ?? ''
+        return (infoByMonth[month] ?? []) as never
+      }
+      return search as never
+    }
+  )
+}
+
+const secDefInfoUrls = (): string[] =>
+  vi
+    .mocked(fetchBrokerJson)
+    .mock.calls.map((call) => call[0]?.url ?? '')
+    .filter((url) => url.includes('/iserver/secdef/info'))
 
 describe('resolveIbkrConidSpec', () => {
   it('maps asset classes to IBKR security types', () => {
@@ -465,7 +518,12 @@ describe('resolveIbkrConidFromApi', () => {
 
   it('does not share a cache entry between two expiries of one futures root', async () => {
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue(mesFutureRows as never)
+    // Neither section names an exchange, so the hop has to use the documented
+    // SMART default - and say so.
+    mockSecDefByMonth(mesFutureRows, {
+      SEP26: [{ conid: '495492861', symbol: 'MES', secType: 'FUT', exchange: 'SMART' }],
+      DEC26: [{ conid: '495492862', symbol: 'MES', secType: 'FUT', exchange: 'SMART' }],
+    })
 
     const september = await resolveIbkrConidFromApi({
       symbol: 'MES',
@@ -478,9 +536,11 @@ describe('resolveIbkrConidFromApi', () => {
       context: { exchange: 'CME', currency: 'USD', expiry: 'DEC26' },
     })
 
-    expect(september.conid).toBe(466221142)
-    expect(december.conid).toBe(515151515)
-    expect(fetchBrokerJson).toHaveBeenCalledTimes(2)
+    expect(september.conid).toBe(495492861)
+    expect(december.conid).toBe(495492862)
+    // Two hops: one per contract month, each for that month's own conid.
+    expect(secDefInfoUrls()).toHaveLength(2)
+    expect(secDefInfoUrls()[0]).toContain('exchange=SMART')
   })
 
   it('does not let the marked futures root serve the bare root', async () => {
@@ -512,13 +572,14 @@ describe('resolveIbkrConidFromApi', () => {
     expect(fetchBrokerJson).toHaveBeenCalledTimes(3)
   })
 
-  it('searches the root symbol and picks the contract month the listing offers', async () => {
+  it('searches the root symbol, then hops to the contract month the listing offers', async () => {
     // The live failure, in one test: the dropdown supplied `MESZ25`, the old
     // code sent `symbol=MESZ25` verbatim, secdef/search matched nothing and
-    // every market request for a December 2025 contract failed. The request
-    // has to go out for the ROOT, and the section's `months` picks the month.
+    // every market request for a December 2025 contract failed. The request has
+    // to go out for the ROOT, and the section's `months` picks the month - whose
+    // conid is a SECOND question the search cannot answer.
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+    mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
 
     const resolution = await resolveIbkrConidFromApi({
       symbol: 'MESZ25',
@@ -526,19 +587,51 @@ describe('resolveIbkrConidFromApi', () => {
       context: { marketCode: 'XCME', currency: 'USD' },
     })
 
-    const requestedUrl = vi.mocked(fetchBrokerJson).mock.calls[0]?.[0]?.url ?? ''
-    expect(requestedUrl).toContain('symbol=MES')
-    expect(requestedUrl).toContain('secType=FUT')
-    expect(requestedUrl).not.toContain('MESZ25')
+    const searchUrl = vi.mocked(fetchBrokerJson).mock.calls[0]?.[0]?.url ?? ''
+    expect(searchUrl).toContain('symbol=MES')
+    expect(searchUrl).toContain('secType=FUT')
+    expect(searchUrl).not.toContain('MESZ25')
     // DEC25 is the SECOND month in its row's list, and the row that carries it
     // is not the first row the search returned.
-    expect(resolution).toEqual({ conid: 515151515, conidSpec: 'FUT' })
-    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+    expect(resolution).toEqual({ conid: 495492863, conidSpec: 'FUT' })
+    expect(secDefInfoUrls()).toHaveLength(1)
+  })
+
+  it('parses a SEMICOLON-separated months list into individual contract months', async () => {
+    // IBKR documents a section's months as "MMMYY format separated by
+    // semicolon", so `SEP26;DEC26;MAR27` is three months. Splitting on a comma
+    // kept the whole list one token, so nothing matched and the lookup failed.
+    // The months at the END of the list are the ones a comma split could never
+    // reach, so they are what proves the list was parsed at all.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesSemicolonMonthsRows, {
+      DEC26: [{ conid: '606060600', symbol: 'MES', secType: 'FUT', exchange: 'CME' }],
+      MAR27: [{ conid: '707070700', symbol: 'MES', secType: 'FUT', exchange: 'CME' }],
+    })
+
+    const december = await resolveIbkrConidFromApi({
+      symbol: 'MESZ26',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+    const march = await resolveIbkrConidFromApi({
+      symbol: 'MESH27',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    expect(december).toEqual({ conid: 606060600, conidSpec: 'FUT' })
+    expect(march).toEqual({ conid: 707070700, conidSpec: 'FUT' })
+    expect(secDefInfoUrls().some((url) => url.includes('month=DEC26'))).toBe(true)
+    expect(secDefInfoUrls().some((url) => url.includes('month=MAR27'))).toBe(true)
   })
 
   it('picks the requested contract month when the listing offers several', async () => {
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+    mockSecDefByMonth(mesContractMonthRows, {
+      SEP26: [{ conid: '466221140', symbol: 'MES', secType: 'FUT', exchange: 'CME' }],
+      DEC26: [{ conid: '606060600', symbol: 'MES', secType: 'FUT', exchange: 'CME' }],
+    })
 
     const december26 = await resolveIbkrConidFromApi({
       symbol: 'MESZ26',
@@ -552,14 +645,43 @@ describe('resolveIbkrConidFromApi', () => {
     })
 
     // DEC26 is the third row; SEP26 the first. Neither may fall back to
-    // "whichever row came back first".
-    expect(december26.conid).toBe(606060606)
-    expect(september26.conid).toBe(466221142)
+    // "whichever row came back first", and the month that reaches the hop has
+    // to be the one the symbol named.
+    expect(december26.conid).toBe(606060600)
+    expect(september26.conid).toBe(466221140)
+    expect(secDefInfoUrls().some((url) => url.includes('month=DEC26'))).toBe(true)
+    expect(secDefInfoUrls().some((url) => url.includes('month=SEP26'))).toBe(true)
+  })
+
+  it('resolves a requested month through the hop and picks its contract deterministically', async () => {
+    // The search row's conid is the UNDERLYING contract, and a section's months
+    // only LISTS that an expiry exists - neither is the month's own contract
+    // identifier. `/iserver/secdef/info` is the hop that returns it, and one
+    // month can answer with several contracts, so the pick is by symbol/secType
+    // and then by the venue the section listed the month on.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'MESZ25',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    // Not the ES row (wrong root, first in the array) and not the SMART MES row
+    // (first MES match): the section listed DEC25 on CME.
+    expect(resolution).toEqual({ conid: 495492863, conidSpec: 'FUT' })
+
+    const [infoUrl] = secDefInfoUrls()
+    expect(infoUrl).toContain('conid=515151515')
+    expect(infoUrl).toContain('sectype=FUT')
+    expect(infoUrl).toContain('month=DEC25')
+    expect(infoUrl).toContain('exchange=CME')
   })
 
   it('keeps the root symbol resolvable for callers that pass only the root', async () => {
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+    mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
 
     const resolution = await resolveIbkrConidFromApi({
       symbol: 'MES',
@@ -567,15 +689,16 @@ describe('resolveIbkrConidFromApi', () => {
       context: { marketCode: 'XCME', currency: 'USD' },
     })
 
-    // No contract month requested, so no expiry filter: the first row offering
-    // a FUT section, exactly as before.
+    // No contract month requested, so no expiry filter and NO extra hop: the
+    // first row offering a FUT section, exactly as before.
     expect(resolution).toEqual({ conid: 466221142, conidSpec: 'FUT' })
+    expect(secDefInfoUrls()).toEqual([])
     expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
   })
 
   it('fails on a contract month the listing does not offer instead of taking the first section', async () => {
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+    mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
 
     await expect(
       resolveIbkrConidFromApi({
@@ -584,6 +707,81 @@ describe('resolveIbkrConidFromApi', () => {
         context: { marketCode: 'XCME', currency: 'USD' },
       })
     ).rejects.toThrow('Unable to resolve IBKR contract identifier for symbol MESZ99')
+    // No section offers DEC99, so there is no contract to look up: the hop is
+    // never attempted and the first FUT section is not accepted instead.
+    expect(secDefInfoUrls()).toEqual([])
+  })
+
+  it('still resolves the marked futures forms from #15, with no contract month and no hop', async () => {
+    // `FMES` / `F*MES` carry no contract month, so the marker handling is the
+    // whole story and the search row's own conid is the answer.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockImplementation(
+      async ({ url }: { url: string }): Promise<never> => {
+        const searchSymbol = decodeURIComponent(/symbol=([^&]+)/.exec(url)?.[1] ?? '')
+        if (searchSymbol !== 'MES') {
+          return [] as never
+        }
+        return [
+          {
+            conid: '466221142',
+            symbol: 'MES',
+            description: 'CME',
+            sections: [{ secType: 'FUT', exchange: 'CME' }],
+          },
+        ] as never
+      }
+    )
+
+    const bareMarker = await resolveIbkrConidFromApi({
+      symbol: 'FMES',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+    const starMarker = await resolveIbkrConidFromApi({
+      symbol: 'F*MES',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    expect(bareMarker).toEqual({ conid: 466221142, conidSpec: 'FUT' })
+    expect(starMarker).toEqual({ conid: 466221142, conidSpec: 'FUT' })
+    expect(secDefInfoUrls()).toEqual([])
+  })
+
+  it('keeps the #15 marker in front of the contract-month hop', async () => {
+    // The two earlier stages still apply: the trailing month comes off first
+    // (#27), and what is left resolves through the marker candidates (#15) - the
+    // root it finally searches is what the hop is asked about.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    vi.mocked(fetchBrokerJson).mockImplementation(
+      async ({ url }: { url: string }): Promise<never> => {
+        if (url.includes('/iserver/secdef/info')) {
+          return [{ conid: '495492863', symbol: 'MES', secType: 'FUT', exchange: 'CME' }] as never
+        }
+        const searchSymbol = decodeURIComponent(/symbol=([^&]+)/.exec(url)?.[1] ?? '')
+        if (searchSymbol !== 'MES') {
+          return [] as never
+        }
+        return [
+          {
+            conid: '466221142',
+            symbol: 'MES',
+            description: 'CME',
+            sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC25' }],
+          },
+        ] as never
+      }
+    )
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'F*MESZ25',
+      assetClass: 'future',
+      context: { marketCode: 'XCME', currency: 'USD' },
+    })
+
+    expect(resolution).toEqual({ conid: 495492863, conidSpec: 'FUT' })
+    expect(secDefInfoUrls()[0]).toContain('month=DEC25')
   })
 
   it('does not read a contract month out of a code that is not one', async () => {
@@ -609,18 +807,44 @@ describe('resolveIbkrConidFromApi', () => {
   it('lets the synchronous order-path read find what a contract-month lookup wrote', async () => {
     // The order pipeline reads the conid SYNCHRONOUSLY and can only pass the
     // symbol and the listing context it derives from the order params - never
-    // an expiry (see resolveIbkrOrderListingContext). So the entry has to be
-    // reachable from the symbol alone, or the order path disagrees with the
-    // market path that seeded it.
+    // an expiry (see resolveIbkrOrderListingContext). That is enough here: the
+    // seed key is built from the catalogue symbol, whose trailing contract month
+    // supplies the month dimension, so the write and the read land on ONE key -
+    // `FUT:MES:XCME:USD:DEC25` - even though the month resolved through the hop.
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue(mesContractMonthRows as never)
+    mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
     const context = { marketCode: 'XCME', currency: 'USD' }
 
     await resolveIbkrConidFromApi({ symbol: 'MESZ25', assetClass: 'future', context })
     const cached = resolveIbkrConid({ symbol: 'MESZ25', assetClass: 'future', context })
 
-    expect(cached).toEqual({ conid: 515151515, conidSpec: 'FUT' })
-    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+    expect(buildIbkrConidCacheKey('MESZ25', 'future', context)).toBe('FUT:MES:XCME:USD:DEC25')
+    expect(cached).toEqual({ conid: 495492863, conidSpec: 'FUT' })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a root-only lookup answer for a contract-month key', async () => {
+    // The one mismatch the order path cannot close by itself: it derives no
+    // expiry, so a lookup that only ever saw the ROOT is keyed `FUT:MES:...:-`
+    // and cannot serve the DEC25 entry. That entry is reachable from the
+    // catalogue symbol alone - which is what the market listing supplies.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
+    const context = { marketCode: 'XCME', currency: 'USD' }
+
+    const rootOnly = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context,
+    })
+
+    expect(rootOnly).toEqual({ conid: 466221142, conidSpec: 'FUT' })
+    expect(buildIbkrConidCacheKey('MES', 'future', context)).not.toBe(
+      buildIbkrConidCacheKey('MESZ25', 'future', context)
+    )
+    expect(() => resolveIbkrConid({ symbol: 'MESZ25', assetClass: 'future', context })).toThrow(
+      'contract identifier not resolved'
+    )
   })
 
   it('requires an access token only against the hosted API', async () => {
