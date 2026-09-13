@@ -233,10 +233,27 @@ interface SecDefSection {
   secType?: string
   exchange?: string
   /**
-   * Contract months a FUT section offers, comma separated (`SEP26,DEC26`) on
-   * the live payload. Absent for everything else.
+   * Contract months a FUT section offers, SEMICOLON separated
+   * (`SEP26;DEC26;MAR27`) on the live payload: IBKR's own docs call it the
+   * "List of expiration month(s) and year(s) in MMMYY format separated by
+   * semicolon". Absent for everything else.
    */
   months?: string
+}
+
+/**
+ * A row of GET /iserver/secdef/info - the contract a specific contract month
+ * resolves to. A BARE ARRAY like the search, with the conid as a string.
+ */
+interface IbkrContractInfoItem {
+  conid?: number | string
+  symbol?: string | null
+  secType?: string
+  exchange?: string
+  listingExchange?: string
+  desc1?: string
+  desc2?: string
+  maturityDate?: string
 }
 
 /**
@@ -272,10 +289,86 @@ const ibkrRowExchangeTokens = (row: SecDefResponseItem): string[] => {
   )
 }
 
-const sectionMonths = (section: SecDefSection): string[] =>
-  typeof section?.months === 'string'
-    ? section.months.split(',').map(normalizeListingToken).filter(Boolean)
-    : []
+/**
+ * A contract month as IBKR writes it in a section's `months` - three letters
+ * and a two-digit year (`DEC25`). Anything that is not one is not a month.
+ */
+const IBKR_CONTRACT_MONTH_TOKEN = /^[A-Z]{3}\d{2}$/
+
+/**
+ * The contract months a section lists.
+ *
+ * IBKR separates them with SEMICOLONS, so parsing on a comma turned a real
+ * payload's whole list (`SEP26;DEC26;MAR27`) into ONE token that could never
+ * equal a requested month: every section was ruled out and contract-month
+ * resolution failed live. Semicolon, comma and whitespace are all accepted (a
+ * comma was the older assumption, and a payload may still be shaped that way),
+ * and only tokens that really are contract months are kept - so an
+ * unanticipated delimiter yields no month rather than one giant token that
+ * silently never matches.
+ */
+const sectionMonths = (section: SecDefSection): string[] => {
+  if (typeof section?.months !== 'string') {
+    return []
+  }
+  return section.months
+    .split(/[;,\s]+/)
+    .map(normalizeListingToken)
+    .filter((token) => IBKR_CONTRACT_MONTH_TOKEN.test(token))
+}
+
+const IBKR_MONTH_LABELS = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+]
+
+/**
+ * A caller's expiry in the `MMMYY` form /iserver/secdef/info takes as `month`.
+ * `SEP26` passes through; `202609` is read as the `YYYYMM` form
+ * IbkrConidListingContext also documents and rewritten. Anything else yields
+ * null, so the hop is skipped rather than sent a month the endpoint cannot read.
+ */
+const toIbkrContractMonth = (expiry?: string | null): string | null => {
+  const token = normalizeListingToken(expiry)
+  if (!token) {
+    return null
+  }
+  const named = /^([A-Z]{3})(\d{2,4})$/.exec(token)
+  if (named) {
+    return `${named[1]}${named[2].slice(-2)}`
+  }
+  const numeric = /^(\d{4})(\d{2})$/.exec(token)
+  if (!numeric) {
+    return null
+  }
+  const label = IBKR_MONTH_LABELS[Number(numeric[2]) - 1]
+  return label ? `${label}${numeric[1].slice(-2)}` : null
+}
+
+/** A conid as a usable number, from the string or number the API sends. */
+const toConid = (value?: number | string | null): number | undefined => {
+  const conid = typeof value === 'string' ? Number(value) : value
+  return typeof conid === 'number' && Number.isFinite(conid) ? conid : undefined
+}
+
+/**
+ * Every exchange a secdef/info contract names. `exchange` is the field the docs
+ * list; `listingExchange` is accepted as a second spelling.
+ */
+const ibkrContractExchangeTokens = (row: IbkrContractInfoItem): string[] =>
+  Array.from(
+    new Set([row?.exchange, row?.listingExchange].map(normalizeListingToken).filter(Boolean))
+  )
 
 /**
  * An expiry filter only rules a section out when the section actually
@@ -286,6 +379,83 @@ const sectionOffersExpiry = (section: SecDefSection, expiry: string[]): boolean 
   expiry.length === 0 ||
   sectionMonths(section).length === 0 ||
   sectionMonths(section).some((month) => expiry.includes(month))
+
+/**
+ * Resolve one contract month's own identifier.
+ *
+ * A section's `months` only LISTS which expiries exist - it carries no conid per
+ * month - and the row /iserver/secdef/search returned is the UNDERLYING, so its
+ * conid is the root's, not the requested month's. `/iserver/secdef/info` is the
+ * documented next hop: hand it the underlying conid, `sectype=FUT`, the month in
+ * `MMMYY` and the section's exchange, and it answers with the contract's own
+ * conid (with its maturity, multiplier and valid exchanges).
+ *
+ * The response is an array of contracts. The entries whose `symbol` and
+ * `secType` match the request are kept; when the section named an exchange, an
+ * entry on that exchange wins - one month can be listed on several venues and
+ * the section's venue is the one whose months were matched. Remaining ties keep
+ * the order IBKR returned and are logged. Nothing usable answers `undefined`,
+ * and the caller fails rather than falling back to the underlying conid, which
+ * is a different contract.
+ */
+const fetchIbkrContractMonthConid = async ({
+  underlyingConid,
+  secType,
+  month,
+  exchange,
+  rootSymbol,
+  accessToken,
+}: {
+  underlyingConid: number
+  secType: string
+  month: string
+  exchange: string
+  rootSymbol: string
+  accessToken?: string
+}): Promise<number | undefined> => {
+  const searchParams = new URLSearchParams({
+    conid: String(underlyingConid),
+    // The docs spell this query parameter lowercase (`sectype`).
+    sectype: secType,
+    month,
+    exchange,
+  })
+
+  const response = await fetchBrokerJson<
+    IbkrContractInfoItem[] | { contracts?: IbkrContractInfoItem[] }
+  >({
+    providerId: 'ibkr',
+    url: `${buildIbkrApiUrl('/iserver/secdef/info')}?${searchParams.toString()}`,
+    init: {
+      method: 'GET',
+      headers: buildIbkrAuthHeaders({ accessToken }),
+    },
+  })
+
+  const rows = Array.isArray(response) ? response : (response?.contracts ?? [])
+  const requestedSymbol = normalizeListingToken(rootSymbol)
+  const requestedSpec = normalizeListingToken(secType)
+  const matchingRows = rows.filter((row) => {
+    const rowSymbol = normalizeListingToken(row?.symbol)
+    const rowSpec = normalizeListingToken(row?.secType)
+    return (!rowSymbol || rowSymbol === requestedSymbol) && (!rowSpec || rowSpec === requestedSpec)
+  })
+  const pool = matchingRows.length > 0 ? matchingRows : rows
+  const requestedExchange = normalizeListingToken(exchange)
+  const venueMatch = pool.find((row) => ibkrContractExchangeTokens(row).includes(requestedExchange))
+  const chosen = venueMatch ?? pool[0]
+  if (pool.length > 1) {
+    logger.warn('IBKR secdef/info answered one contract month with several contracts', {
+      underlyingConid,
+      secType,
+      month,
+      exchange,
+      matched: pool.length,
+      chosenConid: chosen?.conid,
+    })
+  }
+  return toConid(chosen?.conid)
+}
 
 /**
  * Resolve an IBKR contract identifier for a symbol and seed the in-memory
@@ -355,14 +525,29 @@ export async function resolveIbkrConidFromApi({
     })
   }
 
-  // Sec types live under `sections` on the real payload; the flat `secType`
-  // field is kept for older shapes. A row matching no section is skipped.
-  const matchesRequestedSpec = (row: SecDefResponseItem): boolean => {
+  /**
+   * The contract month to resolve, in the `MMMYY` form secdef/info takes. It is
+   * what decides whether the extra hop runs at all: a root-only lookup resolves
+   * to the row's own conid exactly as before.
+   */
+  const requestedContractMonth = requestedExpiry.length
+    ? toIbkrContractMonth(requestedExpiry[0])
+    : null
+
+  /**
+   * The section a row is selected by, plus the row itself. Sec types live under
+   * `sections` on the real payload; the flat `secType` field is kept for older
+   * shapes. A row matching no section is skipped.
+   *
+   * The section is returned, not just a boolean, because the secdef/info hop
+   * needs the venue those months were listed on.
+   */
+  const matchRequestedSection = (row: SecDefResponseItem): SecDefSection | null | undefined => {
     const sections = Array.isArray(row?.sections) ? row.sections : []
     if (sections.length === 0) {
-      return (row?.secType ?? '').toUpperCase() === conidSpec
+      return (row?.secType ?? '').toUpperCase() === conidSpec ? null : undefined
     }
-    return sections.some(
+    return sections.find(
       (section) =>
         (section?.secType ?? '').toUpperCase() === conidSpec &&
         sectionOffersExpiry(section, requestedExpiry)
@@ -414,24 +599,61 @@ export async function resolveIbkrConidFromApi({
     // The live endpoint answers with a bare array; accept the wrapped shape too
     // so a future/edge response cannot silently resolve to nothing.
     const rows = Array.isArray(response) ? response : (response?.contracts ?? [])
-    const specMatches = rows.filter(matchesRequestedSpec)
+    const specMatches = rows
+      .map((row) => ({ row, section: matchRequestedSection(row) }))
+      .filter((match) => match.section !== undefined)
     const venueMatch = requestedExchanges.length
-      ? specMatches.find(matchesRequestedListing)
+      ? specMatches.find((match) => matchesRequestedListing(match.row))
       : undefined
     if (requestedExchanges.length && !venueMatch && specMatches.length > 0) {
       logger.warn('IBKR returned no listing for the requested venue', {
         symbol: candidate,
         requestedExchanges,
-        availableExchanges: specMatches.flatMap(ibkrRowExchangeTokens),
+        availableExchanges: specMatches.flatMap((match) => ibkrRowExchangeTokens(match.row)),
       })
     }
-    const rawConid = (venueMatch ?? specMatches[0])?.conid
-    const conid = typeof rawConid === 'string' ? Number(rawConid) : rawConid
 
-    if (typeof conid === 'number' && Number.isFinite(conid)) {
-      resolvedConid = conid
+    const chosen = venueMatch ?? specMatches[0]
+    const underlyingConid = toConid(chosen?.row?.conid)
+    if (underlyingConid === undefined) {
+      continue
+    }
+
+    // No contract month requested: the underlying's own conid is the answer,
+    // exactly as before - no extra hop.
+    if (!requestedContractMonth) {
+      resolvedConid = underlyingConid
       break
     }
+
+    // A specific month was requested, so the row's conid (the UNDERLYING
+    // contract) is not the answer: the month has its own conid, and
+    // /iserver/secdef/info is the documented hop that returns it.
+    const sectionExchange = normalizeListingToken(chosen?.section?.exchange)
+    if (!sectionExchange) {
+      logger.warn(
+        'IBKR secdef section names no exchange; falling back to the documented SMART default',
+        { symbol: candidate, month: requestedContractMonth }
+      )
+    }
+    resolvedConid = await fetchIbkrContractMonthConid({
+      underlyingConid,
+      secType: conidSpec,
+      month: requestedContractMonth,
+      exchange: sectionExchange || 'SMART',
+      // The contract's own `symbol` is the underlying's, which the row names
+      // more reliably than the candidate spelling that matched it (`FMES` ->
+      // `MES`).
+      rootSymbol: chosen?.row?.symbol || candidate,
+      accessToken,
+    })
+    if (resolvedConid !== undefined) {
+      break
+    }
+    // The hop named no contract for the requested month. The next candidate is
+    // a different spelling of the same root, not a different month, so it is
+    // worth one attempt; if it also fails the caller gets the clear error below
+    // rather than the underlying's identifier, which is another contract.
   }
 
   if (resolvedConid === undefined) {

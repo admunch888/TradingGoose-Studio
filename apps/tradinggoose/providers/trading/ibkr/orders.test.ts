@@ -292,23 +292,30 @@ describe('prepareIbkrOrderRequest', () => {
     // The live failure: the market listing dropdown supplied `MESZ25` for a
     // December 2025 Micro E-mini S&P, and nothing in the order params - or in
     // the listing context derived from them - carries an expiry. The seed has
-    // to resolve the root and pick the month, and the synchronous read has to
-    // land on the same entry holding nothing but the symbol.
+    // to resolve the root, hop to that month's own conid, and the synchronous
+    // read has to land on the same entry holding nothing but the symbol.
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    vi.mocked(fetchBrokerJson).mockResolvedValue([
-      {
-        conid: '466221142',
-        symbol: 'MES',
-        description: 'CME',
-        sections: [{ secType: 'FUT', exchange: 'CME', months: 'SEP26,DEC26' }],
-      },
-      {
-        conid: '515151515',
-        symbol: 'MES',
-        description: 'CME',
-        sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC25,MAR26' }],
-      },
-    ] as never)
+    vi.mocked(fetchBrokerJson).mockImplementation(
+      async ({ url }: { url: string }): Promise<never> => {
+        if (url.includes('/iserver/secdef/info')) {
+          return [{ conid: '495492863', symbol: 'MES', secType: 'FUT', exchange: 'CME' }] as never
+        }
+        return [
+          {
+            conid: '466221142',
+            symbol: 'MES',
+            description: 'CME',
+            sections: [{ secType: 'FUT', exchange: 'CME', months: 'SEP26;DEC26' }],
+          },
+          {
+            conid: '515151515',
+            symbol: 'MES',
+            description: 'CME',
+            sections: [{ secType: 'FUT', exchange: 'CME', months: 'DEC25;MAR26' }],
+          },
+        ] as never
+      }
+    )
     const params = {
       ...baseParams,
       assetClass: 'future' as const,
@@ -330,8 +337,9 @@ describe('prepareIbkrOrderRequest', () => {
     const request = buildIbkrOrderRequest(params)
 
     // DEC25 is the second month its row lists, and the row is the second one
-    // the search returned; the first row is September.
-    expect(request.body).toMatchObject({ conid: 515151515, conidSpec: 'FUT' })
-    expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+    // the search returned; the first row is September. Its contract id is the
+    // one secdef/info answered for that month, not the row's own.
+    expect(request.body).toMatchObject({ conid: 495492863, conidSpec: 'FUT' })
+    expect(fetchBrokerJson).toHaveBeenCalledTimes(2)
   })
 })
