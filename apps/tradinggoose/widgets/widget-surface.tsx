@@ -12,6 +12,7 @@ import type { WidgetComponentProps, WidgetHeaderSlots, WidgetRuntimeContext } fr
 import { useDashboardWidgetRenderState } from '@/widgets/widget-config-runtime'
 import { PairColorDropdown } from '@/widgets/widgets/components/pair-color-dropdown'
 import { WidgetActionMenu } from '@/widgets/widgets/components/widget-action-menu'
+import { WidgetRenderBoundary } from '@/widgets/widgets/components/widget-render-boundary'
 import { WidgetSelector } from '@/widgets/widgets/components/widget-selector'
 
 type HeaderSlotContent = ReactNode | ReactNode[]
@@ -112,13 +113,31 @@ function WidgetSurfaceComponent({
                   onSelect={handleWidgetSelect}
                   disabled={!onWidgetChange}
                 />
-                {renderHeaderSlot(header?.left ?? registryHeader?.left)}
+                <WidgetRenderBoundary
+                  label={`${widgetKey}:header.left`}
+                  message={copy.failedToLoadWidget}
+                  retryLabel={copy.retry}
+                >
+                  {renderHeaderSlot(header?.left ?? registryHeader?.left)}
+                </WidgetRenderBoundary>
               </div>
               <div className='flex h-8 flex-grow basis-0 items-center justify-center gap-1 whitespace-nowrap text-center'>
-                {renderHeaderSlot(header?.center ?? registryHeader?.center)}
+                <WidgetRenderBoundary
+                  label={`${widgetKey}:header.center`}
+                  message={copy.failedToLoadWidget}
+                  retryLabel={copy.retry}
+                >
+                  {renderHeaderSlot(header?.center ?? registryHeader?.center)}
+                </WidgetRenderBoundary>
               </div>
               <div className='flex h-8 flex-grow basis-0 items-center justify-end gap-1 whitespace-nowrap pr-1 text-right'>
-                {renderHeaderSlot(header?.right ?? registryHeader?.right)}
+                <WidgetRenderBoundary
+                  label={`${widgetKey}:header.right`}
+                  message={copy.failedToLoadWidget}
+                  retryLabel={copy.retry}
+                >
+                  {renderHeaderSlot(header?.right ?? registryHeader?.right)}
+                </WidgetRenderBoundary>
                 {onPanelSplit || onPanelSplitHorizontal || onPanelClose ? (
                   <WidgetActionMenu
                     onSplitVertical={onPanelSplit ? handlePanelSplit : undefined}
@@ -165,17 +184,24 @@ function WidgetSurfaceComponent({
               <span className='sr-only'>{copy.loadingWidget}</span>
             </div>
           ) : WidgetComponent ? (
-            <RenderWidgetComponent
-              channelId={channelId}
-              params={renderWidget?.params ?? null}
-              context={context}
-              pairColor={pairColor}
-              panelId={panelId}
-              widget={renderWidget}
-              onWidgetChange={onWidgetChange}
-              onWidgetParamsPatch={onWidgetParamsPatch}
-              onWidgetLinkedParamsPatch={onWidgetLinkedParamsPatch}
-            />
+            <WidgetRenderBoundary
+              label={widgetKey}
+              message={copy.failedToLoadWidget}
+              retryLabel={copy.retry}
+              retryingLabel={copy.retrying}
+            >
+              <RenderWidgetComponent
+                channelId={channelId}
+                params={renderWidget?.params ?? null}
+                context={context}
+                pairColor={pairColor}
+                panelId={panelId}
+                widget={renderWidget}
+                onWidgetChange={onWidgetChange}
+                onWidgetParamsPatch={onWidgetParamsPatch}
+                onWidgetLinkedParamsPatch={onWidgetLinkedParamsPatch}
+              />
+            </WidgetRenderBoundary>
           ) : null}
         </div>
       </Card>
