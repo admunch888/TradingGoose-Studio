@@ -81,3 +81,24 @@ spec:
   selector:
     {{- include "tradinggoose.ollama.selectorLabels" . | nindent 4 }}
 {{- end }}
+
+{{- if .Values.kronos.enabled }}
+---
+# Service for Kronos forecasting
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tradinggoose.fullname" . }}-kronos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tradinggoose.kronos.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.kronos.service.type }}
+  ports:
+    - port: {{ .Values.kronos.service.port }}
+      targetPort: {{ .Values.kronos.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "tradinggoose.kronos.selectorLabels" . | nindent 4 }}
+{{- end }}

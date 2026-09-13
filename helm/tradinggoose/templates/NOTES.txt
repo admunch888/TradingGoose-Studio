@@ -39,6 +39,12 @@
 4. Ollama service is available internally for AI model operations.
 {{- end }}
 
+{{- if .Values.kronos.enabled }}
+
+5. Kronos forecasting service is available internally at {{ include "tradinggoose.kronosUrl" . }}.
+   The model takes several minutes to load on CPU; forecasts fail until the pod is Ready.
+{{- end }}
+
 {{- if not .Values.postgresql.enabled }}
 
 WARNING: You have disabled the internal PostgreSQL database.

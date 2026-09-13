@@ -25,6 +25,9 @@ services:
       - COPILOT_API_URL=${COPILOT_API_URL:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}
       - NEXT_PUBLIC_SOCKET_URL=${NEXT_PUBLIC_SOCKET_URL:?set NEXT_PUBLIC_SOCKET_URL in .env}
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-false}
+      - KRONOS_INTERNAL_URL=${KRONOS_INTERNAL_URL:-http://kronos:8000}
+      - KRONOS_INTERNAL_TOKEN=${KRONOS_API_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -92,6 +95,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Kronos forecasting service (optional; start with --profile kronos).
+  # No published image exists, so it is built from source unless KRONOS_IMAGE
+  # points at one you pushed. The model takes a few minutes to load on CPU.
+  kronos:
+    profiles:
+      - kronos
+    image: ${KRONOS_IMAGE:-tradinggoose/kronos-inference:local}
+    build:
+      context: ./services/kronos-inference
+    restart: unless-stopped
+    environment:
+      - KRONOS_API_TOKEN=${KRONOS_API_TOKEN:-}
 
 volumes:
   postgres_data:

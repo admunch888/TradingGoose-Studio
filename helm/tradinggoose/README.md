@@ -255,6 +255,29 @@ deployment strategy; autoscaling and pod disruption budget settings apply only t
 | `ollama.livenessProbe` | Ollama liveness probe configuration | See values.yaml |
 | `ollama.readinessProbe` | Ollama readiness probe configuration | See values.yaml |
 
+### Kronos Parameters
+
+Kronos powers the Kronos Forecast workflow block. No public image is published: build `services/kronos-inference` (the model weights are downloaded during the build) and push it to your registry. The repository starts with `tradinggoose/`, so `global.imageRegistry` is prepended; point `kronos.image.repository` (or the global registry) at the image you pushed. Enabling it also sets `KRONOS_ENABLED`, `KRONOS_INTERNAL_URL` and `KRONOS_INTERNAL_TOKEN` on the app.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `kronos.enabled` | Deploy Kronos and point the app at it | `false` |
+| `kronos.image.repository` | Kronos image repository | `tradinggoose/kronos-inference` |
+| `kronos.image.tag` | Kronos image tag | `latest` |
+| `kronos.image.pullPolicy` | Kronos image pull policy | `IfNotPresent` |
+| `kronos.replicaCount` | Number of Kronos replicas | `1` |
+| `kronos.apiToken` | Shared bearer token, 32+ characters (required when enabled) | `""` |
+| `kronos.nodeSelector` | Kronos node selector | `{}` |
+| `kronos.tolerations` | Kronos tolerations | `[]` |
+| `kronos.resources` | Kronos resource limits and requests | See values.yaml |
+| `kronos.env` | Extra `KRONOS_*` service settings | `{}` |
+| `kronos.service.type` | Kronos service type | `ClusterIP` |
+| `kronos.service.port` | Kronos service port | `8000` |
+| `kronos.service.targetPort` | Kronos container port (the image listens on 8000) | `8000` |
+| `kronos.startupProbe` | Startup probe; allows about 15 minutes for the model to load | See values.yaml |
+| `kronos.livenessProbe` | Kronos liveness probe configuration | See values.yaml |
+| `kronos.readinessProbe` | Kronos readiness probe configuration | See values.yaml |
+
 ### Ingress Parameters
 
 | Parameter | Description | Default |

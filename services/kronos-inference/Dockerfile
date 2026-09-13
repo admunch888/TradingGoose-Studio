@@ -1,4 +1,21 @@
 # syntax=docker/dockerfile:1
+
+# Model weights are fetched at build time from pinned Hugging Face revisions, so
+# the image is self-contained and the runtime can stay offline (HF_HUB_OFFLINE).
+# The revisions must match kronos_api/config.py (tests/test_container_packaging.py).
+FROM python:3.11-slim AS weights
+
+ARG KRONOS_MODEL_REPO=NeoQuasar/Kronos-base
+ARG KRONOS_MODEL_REVISION=2b554741eca47781b64468546e77fef3e85130e6
+ARG KRONOS_TOKENIZER_REPO=NeoQuasar/Kronos-Tokenizer-base
+ARG KRONOS_TOKENIZER_REVISION=0e0117387f39004a9016484a186a908917e22426
+
+RUN pip install --no-cache-dir "huggingface-hub>=0.33,<2" && \
+    python -c "import os; from huggingface_hub import snapshot_download as fetch; files = ['config.json', 'model.safetensors']; fetch(os.environ['KRONOS_MODEL_REPO'], revision=os.environ['KRONOS_MODEL_REVISION'], local_dir='/models/kronos-base', allow_patterns=files); fetch(os.environ['KRONOS_TOKENIZER_REPO'], revision=os.environ['KRONOS_TOKENIZER_REVISION'], local_dir='/models/kronos-tokenizer-base', allow_patterns=files)" && \
+    rm -rf /models/kronos-base/.cache /models/kronos-tokenizer-base/.cache && \
+    test -f /models/kronos-base/model.safetensors && \
+    test -f /models/kronos-tokenizer-base/model.safetensors
+
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -26,9 +43,8 @@ COPY third_party/kronos/model ./third_party/kronos/model
 COPY third_party/kronos/LICENSE ./third_party/kronos/LICENSE
 COPY third_party/kronos/UPSTREAM_REVISION ./third_party/kronos/UPSTREAM_REVISION
 
-# Copy model weights from local cache (pre-downloaded by setup script)
-COPY models/kronos-base /models/kronos-base
-COPY models/kronos-tokenizer-base /models/kronos-tokenizer-base
+COPY --from=weights /models/kronos-base /models/kronos-base
+COPY --from=weights /models/kronos-tokenizer-base /models/kronos-tokenizer-base
 
 LABEL org.opencontainers.image.title="TradingGoose Kronos Inference" \
       org.opencontainers.image.description="Private Kronos-base forecasting service for TradingGoose" \
@@ -42,7 +58,10 @@ USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')" || exit 1
+# Probe the IPv4 loopback: uvicorn listens on 0.0.0.0 only, and the loopback name
+# can resolve to ::1. Loading the model takes several minutes on CPU, during which
+# /health/ready answers 503, hence the long start period.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')" || exit 1
 
 CMD ["uvicorn", "kronos_api.main:create_app", "--host", "0.0.0.0", "--port", "8000", "--factory"]

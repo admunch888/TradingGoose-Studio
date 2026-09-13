@@ -26,6 +26,9 @@ services:
       - OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}
       - NEXT_PUBLIC_SOCKET_URL=${NEXT_PUBLIC_SOCKET_URL:-http://localhost:3002}
       - API_ENCRYPTION_KEY=${API_ENCRYPTION_KEY:-}
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-false}
+      - KRONOS_INTERNAL_URL=${KRONOS_INTERNAL_URL:-http://kronos:8000}
+      - KRONOS_INTERNAL_TOKEN=${KRONOS_API_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -99,6 +102,18 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Kronos forecasting service (optional; start with --profile kronos).
+  # The build downloads the pinned model weights; the model then takes a few
+  # minutes to load on CPU before the container reports healthy.
+  kronos:
+    profiles:
+      - kronos
+    build:
+      context: ./services/kronos-inference
+    environment:
+      - KRONOS_API_TOKEN=${KRONOS_API_TOKEN:-}
+    restart: unless-stopped
 
 volumes:
   postgres_data:

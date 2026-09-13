@@ -176,21 +176,101 @@ const buildHistory = (marketSeries: unknown): Array<Record<string, unknown>> => 
   })
 }
 
+const DAY_MS = 86_400_000
+
+/** Upper bound on candidate steps, so a degenerate calendar cannot loop forever. */
+const MAX_CANDIDATE_STEPS = 200_000
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+}
+
+interface LocalTime {
+  weekday: number
+  dateKey: string
+  minuteOfDay: number
+}
+
+/** Reads an instant's wall-clock weekday, date and minute in the listing's timezone. */
+const createLocalTimeReader = (timezone: string): ((instant: number) => LocalTime) => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hourCycle: 'h23',
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  return (instant) => {
+    const parts: Record<string, string> = {}
+    for (const part of formatter.formatToParts(new Date(instant))) {
+      parts[part.type] = part.value
+    }
+    return {
+      weekday: WEEKDAY_INDEX[parts.weekday],
+      dateKey: `${parts.year}-${parts.month}-${parts.day}`,
+      minuteOfDay: Number(parts.hour) * 60 + Number(parts.minute),
+    }
+  }
+}
+
+interface TradingCalendar {
+  tradesWeekends: boolean
+  /** First and last bar minute-of-day seen, only when the history spans several days. */
+  session?: { openMinute: number; closeMinute: number }
+}
+
 /**
- * Derive the forecast target timestamps by advancing the last history bar by
- * the request interval.
+ * Infer when the listing trades from its own history, so no exchange calendar is
+ * needed: weekend bars mean a 24/7 market (crypto), and several days of bars give
+ * the session's first and last bar time. A single day of bars says nothing about
+ * the session, so it only contributes the weekend rule.
+ */
+const inferTradingCalendar = (
+  historyMs: number[],
+  readLocalTime: (instant: number) => LocalTime
+): TradingCalendar => {
+  const times = historyMs.map(readLocalTime)
+  const tradesWeekends = times.some((time) => time.weekday === 0 || time.weekday === 6)
+  if (new Set(times.map((time) => time.dateKey)).size < 2) {
+    return { tradesWeekends }
+  }
+
+  const minutes = times.map((time) => time.minuteOfDay)
+  return {
+    tradesWeekends,
+    session: { openMinute: Math.min(...minutes), closeMinute: Math.max(...minutes) },
+  }
+}
+
+/**
+ * Derive the forecast target timestamps from the last history bar.
  *
- * Limits: this is plain calendar arithmetic on the last bar's instant, so it
- * does not model trading sessions, exchange holidays or half days - a 1d
- * forecast over a weekend lands on the calendar next day, not the next trade
- * date. Month steps use UTC calendar months (so 31 Jan + 1mo lands in March).
+ * Kronos encodes each target's minute, hour, weekday and date, so targets have
+ * to land where bars actually occur: steps skip weekends unless the history
+ * trades them, intraday steps stay inside the session inferred from the history,
+ * and day-or-longer steps keep the bar's wall-clock time across DST changes.
+ *
+ * Limits: exchange holidays and half days are not modelled. Month steps use UTC
+ * calendar months (so 31 Jan + 1mo lands in March).
  */
 const deriveFutureTimestamps = (
-  lastTimestamp: string,
+  historyTimestamps: string[],
   interval: string,
-  horizonBars: number
+  horizonBars: number,
+  timezone: string
 ): string[] => {
-  const last = Date.parse(lastTimestamp)
+  const historyMs = historyTimestamps.map((timestamp) => Date.parse(timestamp))
+  const last = historyMs[historyMs.length - 1]
   if (!Number.isFinite(last)) {
     throw new Error('History must end with a valid timestamp')
   }
@@ -198,14 +278,54 @@ const deriveFutureTimestamps = (
   const step = resolveIntervalStep(interval)
   const futureTimestamps: string[] = []
 
-  for (let index = 1; index <= horizonBars; index++) {
-    if ('months' in step) {
+  if ('months' in step) {
+    for (let index = 1; index <= horizonBars; index++) {
       const date = new Date(last)
       date.setUTCMonth(date.getUTCMonth() + step.months * index)
       futureTimestamps.push(date.toISOString())
-      continue
     }
-    futureTimestamps.push(new Date(last + step.ms * index).toISOString())
+    return futureTimestamps
+  }
+
+  const readLocalTime = createLocalTimeReader(timezone)
+  const calendar = inferTradingCalendar(historyMs, readLocalTime)
+  const intraday = step.ms < DAY_MS
+
+  const advance = (instant: number): number => {
+    const next = instant + step.ms
+    if (intraday) return next
+    // Keep the bar's wall-clock time when a DST change falls between two bars.
+    let driftMinutes = readLocalTime(instant).minuteOfDay - readLocalTime(next).minuteOfDay
+    if (driftMinutes > 720) driftMinutes -= 1440
+    if (driftMinutes < -720) driftMinutes += 1440
+    return next + driftMinutes * 60_000
+  }
+
+  const isTradingTime = (instant: number): boolean => {
+    const time = readLocalTime(instant)
+    if (!calendar.tradesWeekends && (time.weekday === 0 || time.weekday === 6)) {
+      return false
+    }
+    if (intraday && calendar.session) {
+      return (
+        time.minuteOfDay >= calendar.session.openMinute &&
+        time.minuteOfDay <= calendar.session.closeMinute
+      )
+    }
+    return true
+  }
+
+  let cursor = last
+  for (let steps = 0; futureTimestamps.length < horizonBars; steps++) {
+    if (steps >= MAX_CANDIDATE_STEPS) {
+      throw new Error(
+        'Could not place future timestamps within the trading calendar inferred from the history'
+      )
+    }
+    cursor = advance(cursor)
+    if (isTradingTime(cursor)) {
+      futureTimestamps.push(new Date(cursor).toISOString())
+    }
   }
 
   return futureTimestamps
@@ -214,7 +334,7 @@ const deriveFutureTimestamps = (
 const buildForecastRequest = (requestId: string, body: ForecastRequestBody): unknown => {
   const listing = parseListingIdentityValueStrict(body.listing)
   const history = buildHistory(body.marketSeries)
-  const lastBar = history[history.length - 1].timestamp as string
+  const historyTimestamps = history.map((bar) => bar.timestamp as string)
 
   return {
     requestId,
@@ -226,7 +346,12 @@ const buildForecastRequest = (requestId: string, body: ForecastRequestBody): unk
     timezone: body.timezone,
     normalizationMode: body.normalizationMode,
     history,
-    futureTimestamps: deriveFutureTimestamps(lastBar, body.interval, body.horizonBars),
+    futureTimestamps: deriveFutureTimestamps(
+      historyTimestamps,
+      body.interval,
+      body.horizonBars,
+      body.timezone
+    ),
     parameters: body.parameters,
   }
 }

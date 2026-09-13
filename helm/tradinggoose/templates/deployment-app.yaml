@@ -73,7 +73,17 @@ spec:
             - name: INTERNAL_API_SECRET
               value: {{ .Values.app.env.INTERNAL_API_SECRET | quote }}
             {{- end }}
-            {{- range $key, $value := omit .Values.app.env "DATABASE_URL" "OLLAMA_URL" "INTERNAL_API_SECRET" }}
+            {{- $appEnv := omit .Values.app.env "DATABASE_URL" "OLLAMA_URL" "INTERNAL_API_SECRET" }}
+            {{- if .Values.kronos.enabled }}
+            {{- $appEnv = omit $appEnv "KRONOS_ENABLED" "KRONOS_INTERNAL_URL" "KRONOS_INTERNAL_TOKEN" }}
+            - name: KRONOS_ENABLED
+              value: "true"
+            - name: KRONOS_INTERNAL_URL
+              value: {{ include "tradinggoose.kronosUrl" . | quote }}
+            - name: KRONOS_INTERNAL_TOKEN
+              value: {{ .Values.kronos.apiToken | quote }}
+            {{- end }}
+            {{- range $key, $value := $appEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}

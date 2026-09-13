@@ -449,6 +449,73 @@ ollama:
     timeoutSeconds: 5
     failureThreshold: 3
 
+# Kronos forecasting service (services/kronos-inference)
+kronos:
+  # Enable/disable the Kronos deployment. When enabled, the app receives
+  # KRONOS_ENABLED, KRONOS_INTERNAL_URL and KRONOS_INTERNAL_TOKEN automatically.
+  enabled: false
+
+  # No public image is published: build services/kronos-inference (the model
+  # weights are baked in at build time) and push it to your registry. Because the
+  # repository starts with "tradinggoose/", global.imageRegistry is prepended, so
+  # set that registry or change the repository to where you pushed the image.
+  image:
+    repository: tradinggoose/kronos-inference
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Number of replicas
+  replicaCount: 1
+
+  # Shared bearer token, 32+ characters (openssl rand -hex 32). Used as the
+  # service's KRONOS_API_TOKEN and the app's KRONOS_INTERNAL_TOKEN.
+  apiToken: ""
+
+  nodeSelector: {}
+  tolerations: []
+
+  # Resource limits and requests (CPU inference)
+  resources:
+    limits:
+      memory: "4Gi"
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+
+  # Extra service settings (KRONOS_ prefix), e.g. KRONOS_MAX_QUEUE
+  env: {}
+
+  # Service configuration (the container listens on 8000)
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+
+  # Loading the model takes several minutes on CPU; the startup probe allows 15.
+  startupProbe:
+    httpGet:
+      path: /health/ready
+      port: 8000
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 90
+
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8000
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8000
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
 # Ingress configuration
 ingress:
   # Enable/disable ingress

@@ -1,0 +1,64 @@
+{{- if .Values.kronos.enabled }}
+---
+# Deployment for the Kronos forecasting service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tradinggoose.fullname" . }}-kronos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tradinggoose.kronos.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.kronos.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tradinggoose.kronos.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "tradinggoose.kronos.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "tradinggoose.serviceAccountName" . }}
+      {{- include "tradinggoose.nodeSelector" .Values.kronos | nindent 6 }}
+      {{- include "tradinggoose.tolerations" .Values.kronos | nindent 6 }}
+      {{- include "tradinggoose.affinity" .Values | nindent 6 }}
+      containers:
+        - name: kronos
+          image: {{ include "tradinggoose.image" (dict "context" . "image" .Values.kronos.image) }}
+          imagePullPolicy: {{ .Values.kronos.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.kronos.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: KRONOS_API_TOKEN
+              value: {{ .Values.kronos.apiToken | quote }}
+            {{- range $key, $value := omit .Values.kronos.env "KRONOS_API_TOKEN" }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- if .Values.kronos.startupProbe }}
+          startupProbe:
+            {{- toYaml .Values.kronos.startupProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.kronos.livenessProbe }}
+          livenessProbe:
+            {{- toYaml .Values.kronos.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.kronos.readinessProbe }}
+          readinessProbe:
+            {{- toYaml .Values.kronos.readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- include "tradinggoose.resources" .Values.kronos | nindent 10 }}
+{{- end }}
