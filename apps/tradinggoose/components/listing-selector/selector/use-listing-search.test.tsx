@@ -13,6 +13,16 @@ const reactActEnvironment = globalThis as typeof globalThis & {
 }
 
 const fetchListingsMock = vi.fn()
+const fetchIbkrListingsMock = vi.fn()
+
+vi.mock('@/lib/listing/ibkr-search', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/listing/ibkr-search')>()
+  return {
+    ...actual,
+    fetchIbkrListings: (...args: Parameters<typeof fetchIbkrListingsMock>) =>
+      fetchIbkrListingsMock(...args),
+  }
+})
 
 vi.mock('@/lib/listing/search', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/listing/search')>()
@@ -35,6 +45,7 @@ describe('useMarketListingSearch', () => {
     vi.useFakeTimers()
     reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true
     fetchListingsMock.mockReset()
+    fetchIbkrListingsMock.mockReset()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -375,6 +386,121 @@ describe('useMarketListingSearch', () => {
       ],
       isLoading: false,
       error: undefined,
+    })
+  })
+
+  it('searches the IBKR gateway, not the catalogue, when IBKR charts the listing', async () => {
+    const updateInstance = vi.fn()
+    const listing = {
+      listingIdentity: {
+        listing_id: 'MESZ26',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default',
+        manual: { assetClass: 'future', marketCode: 'CME' },
+      },
+      base: 'MESZ26',
+      name: 'Micro E-Mini S&P 500 December 2026',
+    }
+    fetchIbkrListingsMock.mockResolvedValue([listing])
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          open
+          query='future: MES'
+          providerType='market'
+          marketProviderId='ibkr'
+          instanceId='test-selector'
+          updateInstance={updateInstance}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    expect(fetchListingsMock).not.toHaveBeenCalled()
+    expect(fetchIbkrListingsMock).toHaveBeenCalledWith(
+      { query: 'MES', assetClass: 'future' },
+      expect.any(AbortSignal)
+    )
+    expect(updateInstance).toHaveBeenLastCalledWith('test-selector', {
+      results: [listing],
+      isLoading: false,
+      error: undefined,
+    })
+  })
+
+  it('follows the market provider when a picker also names a broker', async () => {
+    const updateInstance = vi.fn()
+    fetchListingsMock.mockResolvedValue([])
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          open
+          query='AAPL'
+          providerType='trading'
+          marketProviderId='yahoo-finance'
+          tradingProviderId='ibkr'
+          instanceId='test-selector'
+          updateInstance={updateInstance}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    expect(fetchIbkrListingsMock).not.toHaveBeenCalled()
+    expect(fetchListingsMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for a symbol before searching IBKR', async () => {
+    const updateInstance = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          open
+          query=''
+          providerType='market'
+          providerId='ibkr'
+          instanceId='test-selector'
+          updateInstance={updateInstance}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    expect(fetchIbkrListingsMock).not.toHaveBeenCalled()
+    expect(fetchListingsMock).not.toHaveBeenCalled()
+    expect(updateInstance).toHaveBeenLastCalledWith('test-selector', {
+      results: [],
+      isLoading: false,
+      error: undefined,
+    })
+  })
+
+  it('reports a failed IBKR search so the picker can offer manual entry', async () => {
+    const updateInstance = vi.fn()
+    fetchIbkrListingsMock.mockRejectedValue(new Error('IBKR gateway session is not authenticated'))
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          open
+          query='MES'
+          providerType='market'
+          marketProviderId='ibkr'
+          instanceId='test-selector'
+          updateInstance={updateInstance}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(updateInstance).toHaveBeenLastCalledWith('test-selector', {
+      isLoading: false,
+      error: 'IBKR gateway session is not authenticated',
     })
   })
 })

@@ -79,6 +79,27 @@ be recreated.
 - **Portfolio detail**: account summary, positions, cash balances, performance
   (1W, 1M, 3M, YTD, 1Y)
 
+## Listing search
+
+When IBKR is the market provider, the listing picker searches your IBKR
+gateway instead of the TradingGoose Market catalogue, so IBKR charts and orders
+do not use the catalogue's request quota.
+
+- Type a symbol (`AAPL`, `MES`). Use the asset class tabs or a prefix
+  (`future: MES`) to narrow the results.
+- A futures root lists its next contract months, for example `MESU26`,
+  `MESZ26` and `MESH27` on CME. Expired months are not shown.
+- Search needs a logged-in gateway session. If the gateway is logged out, or the
+  deployment uses the hosted IBKR API, the picker shows the error and offers
+  manual entry: enter the symbol, choose the asset class and optionally the
+  market (for example `MESZ26`, Future, `CME`).
+
+Listings picked this way carry their own asset class and market. Charting them
+does not look them up in the catalogue, and no catalogue market hours are
+applied to them. Charts saved with catalogue listings keep working; their
+lookups are cached for hours, and while the catalogue is rate limited the last
+good answer is used.
+
 ## Order confirmations
 
 IBKR holds some orders until a warning is answered - for example a reminder

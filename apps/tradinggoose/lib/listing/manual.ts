@@ -25,10 +25,12 @@ export type ManualListingDraft = {
 }
 
 /**
- * Whether the picker offers the manual path. Only when a search came back with
- * nothing: an empty query, a search still running, a failed search and a
- * search that returned rows all leave the catalogue path exactly as it was,
- * and a variable/tag value (`<block.value>`) is not a symbol at all.
+ * Whether the picker offers the manual path: when a search came back with
+ * nothing, and when the search failed - a rate-limited catalogue or a logged-out
+ * gateway must not leave the operator with no way to name a symbol. An empty
+ * query, a search still running and a search that returned rows leave the
+ * search path exactly as it was, and a variable/tag value (`<block.value>`) is
+ * not a symbol at all.
  */
 export const shouldOfferManualListing = ({
   query,
@@ -43,7 +45,8 @@ export const shouldOfferManualListing = ({
 }): boolean => {
   const trimmed = query.trim()
   if (!trimmed || trimmed.startsWith('<')) return false
-  if (busy || error) return false
+  if (busy) return false
+  if (error) return true
   return resultCount === 0
 }
 

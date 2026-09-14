@@ -138,10 +138,24 @@ describe('whether the picker offers the manual path', () => {
     expect(shouldOfferManualListing({ ...base, query: '  MESZ26 ' })).toBe(true)
   })
 
-  it('stays out of the way of the catalogue in every other case', () => {
+  it('offers it when the search failed, so a refused search is not a dead end', () => {
+    expect(
+      shouldOfferManualListing({
+        ...base,
+        error: 'Free tier rate limit exceeded. Max 100 requests per minute.',
+      })
+    ).toBe(true)
+    expect(
+      shouldOfferManualListing({ ...base, error: 'Market search failed', resultCount: 3 })
+    ).toBe(true)
+  })
+
+  it('stays out of the way of the search in every other case', () => {
     expect(shouldOfferManualListing({ ...base, resultCount: 1 })).toBe(false)
     expect(shouldOfferManualListing({ ...base, busy: true })).toBe(false)
-    expect(shouldOfferManualListing({ ...base, error: 'Market search failed' })).toBe(false)
+    expect(shouldOfferManualListing({ ...base, busy: true, error: 'Market search failed' })).toBe(
+      false
+    )
     expect(shouldOfferManualListing({ ...base, query: '   ' })).toBe(false)
     expect(shouldOfferManualListing({ ...base, query: '<block.value>' })).toBe(false)
   })
