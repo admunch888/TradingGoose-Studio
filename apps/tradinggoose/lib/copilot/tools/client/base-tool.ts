@@ -6,6 +6,7 @@ import {
   postCopilotMarkCompleteRequest,
 } from '@/stores/copilot/mark-complete'
 import { getCopilotStoreForToolCall } from '@/stores/copilot/store-access'
+import { buildToolCompletionData } from './local-completion'
 import { syncToolState } from './manager'
 
 const baseToolLogger = createLogger('BaseClientTool')
@@ -232,13 +233,22 @@ export class BaseClientTool {
     })
 
     try {
+      const executionContext = this.getExecutionContext()
       const res = await postCopilotMarkCompleteRequest(
         {
           toolCallId: this.toolCallId,
           toolName: this.name,
           status,
           message,
-          data,
+          // A self-hosted model's turn only resumes when the result says it is
+          // local and names its session (see local-completion.ts).
+          data: buildToolCompletionData({
+            data,
+            selectedModel: storeState.selectedModel,
+            reviewSessionId: storeState.currentChat?.reviewSessionId,
+            contextEntityKind: executionContext?.contextEntityKind,
+            contextEntityId: executionContext?.contextEntityId,
+          }),
         },
         storeState.abortController?.signal
       )
