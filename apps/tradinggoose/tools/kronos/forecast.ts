@@ -76,9 +76,10 @@ export const kronosForecastTool: ToolConfig<KronosForecastParams, KronosForecast
   params: {
     listing: {
       type: 'json',
-      required: true,
+      required: false,
       visibility: 'user-only',
-      description: 'Canonical listing payload from the Historical Data block.',
+      description:
+        'Optional listing payload. When omitted, the listing carried by the market series is used.',
     },
     marketSeries: {
       type: 'json',

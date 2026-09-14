@@ -1,14 +1,13 @@
 import { ChartBarIcon } from '@/components/icons/icons'
-import type { BlockConfig, SubBlockConfig } from '@/blocks/types'
-import { AuthMode } from '@/blocks/types'
-import type { MarketSeriesOutput } from '@/tools/market_data'
-import type { ToolResponse } from '@/tools/types'
+import type { ForecastResponse } from '@/lib/kronos/types'
 import {
   LISTING_IDENTITY_VALUE_TYPE,
   parseListingIdentityValueStrict,
 } from '@/lib/listing/identity'
-import { kronosForecastTool } from '@/tools/kronos'
-import type { ForecastResponse } from '@/lib/kronos/types'
+import type { BlockConfig } from '@/blocks/types'
+import { AuthMode } from '@/blocks/types'
+import type { MarketSeriesOutput } from '@/tools/market_data'
+import type { ToolResponse } from '@/tools/types'
 
 interface KronosForecastResponse extends ToolResponse {
   output: ForecastResponse
@@ -34,7 +33,9 @@ export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
       type: 'market-selector',
       layout: 'full',
       providerType: 'market',
-      required: true,
+      required: false,
+      description:
+        'Optional. Leave empty to forecast the listing carried by the market series from the Historical Data block.',
     },
     {
       id: 'marketSeries',
@@ -111,8 +112,16 @@ export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
             ? (JSON.parse(params.marketSeries) as MarketSeriesOutput)
             : (params.marketSeries as MarketSeriesOutput)
 
+        // An empty Listing is left out: the forecast route then uses the
+        // listing the market series carries.
+        const listingValue = params.listing
+        const listingIsBlank =
+          listingValue === undefined ||
+          listingValue === null ||
+          (typeof listingValue === 'string' && listingValue.trim() === '')
+
         return {
-          listing: parseListingIdentityValueStrict(params.listing),
+          listing: listingIsBlank ? undefined : parseListingIdentityValueStrict(listingValue),
           marketSeries,
           interval: params.interval,
           timezone: params.timezone,
@@ -129,7 +138,7 @@ export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
   inputs: {
     listing: {
       type: LISTING_IDENTITY_VALUE_TYPE,
-      description: 'Canonical listing payload.',
+      description: 'Optional listing payload; defaults to the listing in the market series.',
     },
     marketSeries: { type: 'json', description: 'Normalized market series payload.' },
     interval: { type: 'string', description: 'Series interval/timeframe.' },
