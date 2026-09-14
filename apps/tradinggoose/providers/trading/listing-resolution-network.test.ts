@@ -24,6 +24,21 @@ describe('resolveTradingListingIdentity when the listing search is unreachable',
     ).resolves.toBeNull()
   })
 
+  it('keeps a listing supplied by identity without searching', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const listing = {
+      listing_id: 'MESZ26',
+      base_id: '',
+      quote_id: '',
+      listing_type: 'default' as const,
+      manual: { assetClass: 'future' as const, marketCode: 'CME' },
+    }
+
+    await expect(resolveTradingListingIdentity({ listing })).resolves.toEqual(listing)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('still propagates an abort', async () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
     const controller = new AbortController()

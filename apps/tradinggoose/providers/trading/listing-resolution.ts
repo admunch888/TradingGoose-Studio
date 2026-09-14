@@ -7,7 +7,7 @@ import {
 } from '@/lib/listing/identity'
 import { type MarketListingSearchRow, normalizeResolvedListings } from '@/lib/listing/search'
 import { MARKET_API_VERSION } from '@/lib/market/client/constants'
-import { getBaseUrl } from '@/lib/urls/utils'
+import { getInternalAppUrl } from '@/lib/urls/utils'
 import type { AssetClass } from '@/providers/market/types'
 
 type MarketSearchResponse = {
@@ -31,7 +31,7 @@ const MARKET_ID_PREFIX_BY_TYPE: Record<ListingType, string> = {
 const buildMarketSearchUrl = (params: URLSearchParams) => {
   const relativeUrl = `/api/market/search?${params.toString()}`
   if (typeof window !== 'undefined') return relativeUrl
-  return new URL(relativeUrl, getBaseUrl()).toString()
+  return new URL(relativeUrl, getInternalAppUrl()).toString()
 }
 
 const normalizeCode = (value?: string | null) => {
@@ -164,6 +164,10 @@ export async function resolveTradingListingIdentity(
 ): Promise<ListingIdentity | null> {
   const listing = toListingValueObject(input.listing)
   if (listing && isCanonicalMarketIdentity(listing)) return listing
+  // A listing supplied by identity (manual entry, IBKR search, an IBKR
+  // position) is complete; swapping it for a catalogue row would make its
+  // quotes depend on the catalogue again.
+  if (listing?.manual) return listing
 
   const listingType = resolveListingType(listing, input.assetClass)
   const baseCode = getListingBaseCode(input, listing, listingType)

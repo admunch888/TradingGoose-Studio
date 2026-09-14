@@ -158,6 +158,7 @@ function safeCreateEnv() {
 
     // Real-time Communication
     INTERNAL_REALTIME_URL: z.string().url().optional(),           // Internal realtime URL for container-to-container comms
+    INTERNAL_APP_URL: z.string().url().optional(),                // Internal app URL for server-to-app API calls from other containers (e.g. http://app:3000)
     SOCKET_PORT: z.number().optional(),                  // Port for the realtime socket server process
     PORT: z.number().optional(),                  // Main application port
     ALLOWED_ORIGINS: z.string().optional(),                  // CORS allowed origins

@@ -1,6 +1,9 @@
+import type { ListingIdentity } from '@/lib/listing/identity'
+import { buildManualListingIdentity } from '@/lib/listing/manual'
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
 import { buildIbkrAccountUrl } from '@/providers/trading/ibkr/client'
 import { ibkrTradingProviderConfig } from '@/providers/trading/ibkr/config'
+import { IBKR_FUTURES_MONTH_NAMES } from '@/providers/trading/ibkr/symbols'
 import {
   fetchBrokerJson,
   sumFiniteNumbers,
@@ -14,6 +17,59 @@ import type {
 import { tradingSymbolToListingIdentity } from '@/providers/trading/utils'
 
 export const IBKR_DEFAULT_BASE_CURRENCY = 'USD'
+
+const FUTURES_MONTH_LETTER: Record<string, string> = Object.fromEntries(
+  Object.entries(IBKR_FUTURES_MONTH_NAMES).map(([letter, name]) => [name, letter])
+)
+const MONTH_NAMES = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+]
+
+/**
+ * The contract-month symbol for a futures position: `MES` expiring `20261218`
+ * is `MESZ26`, the symbol IBKR search lists and the conid resolver reads back.
+ * Without an expiry the root is kept.
+ */
+export const buildIbkrFuturesPositionSymbol = (ticker: string, expiry?: string): string => {
+  const match = /^(\d{4})(\d{2})\d{0,2}$/.exec(expiry?.trim() ?? '')
+  const letter = match ? FUTURES_MONTH_LETTER[MONTH_NAMES[Number(match[2]) - 1] ?? ''] : undefined
+  return match && letter ? `${ticker}${letter}${match[1].slice(-2)}` : ticker
+}
+
+/**
+ * An IBKR position names its own contract (ticker, asset class, listing
+ * exchange, expiry), so it becomes a listing supplied by identity. Its quotes
+ * and details then come from IBKR and never wait on the listing catalogue - the
+ * Portfolio widget's Market Quotes failed while the catalogue was unreachable
+ * or over its limit. Currency and other pair positions keep the symbol mapping.
+ */
+const buildIbkrPositionListing = (
+  position: any,
+  ticker: string,
+  assetClass: UnifiedTradingSymbolAssetClass
+): ListingIdentity | null => {
+  if (assetClass === 'currency') return null
+  const symbol =
+    assetClass === 'future'
+      ? buildIbkrFuturesPositionSymbol(ticker, readText(position?.expiry))
+      : ticker
+  return buildManualListingIdentity({
+    symbol,
+    assetClass,
+    marketCode: readText(position?.listingExchange),
+  })
+}
 
 export const mapIbkrPositionSide = (
   value: unknown,
@@ -96,7 +152,10 @@ export const normalizeIbkrPositions = (
 
     return [
       {
-        listingIdentity: resolvedSymbol?.listing ?? null,
+        listingIdentity:
+          buildIbkrPositionListing(position, symbolValue, assetClass) ??
+          resolvedSymbol?.listing ??
+          null,
         quantity,
         side,
         averagePrice: toFiniteNumber(position?.avgCost),

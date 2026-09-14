@@ -1,6 +1,6 @@
 import { type ListingResolved, ListingResolvedSchema } from '@/lib/listing/identity'
 import { MARKET_API_VERSION } from '@/lib/market/client/constants'
-import { getBaseUrl } from '@/lib/urls/utils'
+import { getInternalAppUrl } from '@/lib/urls/utils'
 
 function buildMarketSearchUrl(params: Record<string, string>): string {
   const query = new URLSearchParams(params)
@@ -10,7 +10,7 @@ function buildMarketSearchUrl(params: Record<string, string>): string {
     return relativeUrl
   }
 
-  return new URL(relativeUrl, getBaseUrl()).toString()
+  return new URL(relativeUrl, getInternalAppUrl()).toString()
 }
 
 export async function fetchListings(
