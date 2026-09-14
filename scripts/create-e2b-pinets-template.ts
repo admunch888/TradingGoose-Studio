@@ -4,7 +4,7 @@ import { ApiClient, ConnectionConfig, Template } from 'e2b'
 
 const DEFAULT_ALIAS = 'tradinggoose-pinets'
 const DEFAULT_BASE_TEMPLATE = 'code-interpreter-v1'
-const DEFAULT_PINETS_VERSION = '0.8.8'
+const DEFAULT_PINETS_VERSION = '0.9.33'
 const TEMPLATE_LOOKUP_ATTEMPTS = 10
 const TEMPLATE_LOOKUP_DELAY_MS = 1000
 
