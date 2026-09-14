@@ -234,12 +234,17 @@ export async function POST(req: NextRequest) {
 
       // mark-complete carries no model, so it is recovered from the session row
       // that was just verified as owned rather than read back by id alone.
+      // The local runtime stores the model as `vllm/<model>`, so the prefix check
+      // runs on the stored value; stripping first made the check never match and
+      // sent every local continuation to the hosted proxy.
+      const storedModel =
+        ownedSession && (await isLocalReviewSession(ownedSession.id)) ? ownedSession.model : null
       const sessionModel =
-        ownedSession && (await isLocalReviewSession(ownedSession.id))
-          ? toLocalRuntimeModelName(ownedSession.model)
+        storedModel && isCopilotLocalRuntimeModel(storedModel)
+          ? toLocalRuntimeModelName(storedModel)
           : null
 
-      if (reviewSessionId && sessionModel && isCopilotLocalRuntimeModel(sessionModel)) {
+      if (reviewSessionId && sessionModel) {
         await persistLocalContinuation({
           reviewSessionId,
           toolCallId: parsed.id,
