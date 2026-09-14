@@ -136,11 +136,19 @@ const fetchCanonicalListing = async ({
     if (listingType === 'default') params.set('listing_quote_code', quoteCode)
   }
 
-  const response = await fetch(buildMarketSearchUrl(params), {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    signal,
-  })
+  let response: Response
+  try {
+    response = await fetch(buildMarketSearchUrl(params), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal,
+    })
+  } catch (error) {
+    // An aborted request stays an abort; an unreachable search is "no match",
+    // the same answer a failed response already gives.
+    if (signal?.aborted) throw error
+    return null
+  }
   if (!response.ok) return null
 
   const payload = (await response.json().catch(() => ({}))) as MarketSearchResponse

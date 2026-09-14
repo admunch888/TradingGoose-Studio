@@ -1,6 +1,7 @@
 import { copilotReviewSessions, db } from '@tradinggoose/db'
 import { eq } from 'drizzle-orm'
 import { runLocalCopilotTurn } from '@/lib/copilot/local-runtime/agent'
+import { describeModelServerError } from '@/lib/copilot/local-runtime/model-server-error'
 import { persistLocalWorkingMessage } from '@/lib/copilot/local-runtime/persistence'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
 import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-messages'
@@ -245,7 +246,10 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
 
         send('stream_end', {})
       } catch (error) {
-        logger.error(`[${params.requestId}] Local copilot turn failed`, { error })
+        logger.error(`[${params.requestId}] Local copilot turn failed`, {
+          error,
+          ...describeModelServerError(error),
+        })
         send('error', {
           error: error instanceof Error ? error.message : 'Local copilot request failed',
         })
@@ -358,7 +362,10 @@ export async function handleLocalCopilotContinuation(
 
         send('stream_end', {})
       } catch (error) {
-        logger.error(`[${params.requestId}] Local copilot continuation failed`, { error })
+        logger.error(`[${params.requestId}] Local copilot continuation failed`, {
+          error,
+          ...describeModelServerError(error),
+        })
         send('error', {
           // The client reads `data.error`; a `message` field renders as a
           // generic failure with the reason dropped.
