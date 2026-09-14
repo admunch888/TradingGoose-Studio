@@ -130,7 +130,13 @@ export const resolveOllamaServiceConfig = createServiceResolver('ollama', (confi
 export const isOllamaServiceConfigured = (): Promise<boolean> =>
   isSystemServiceSettingStored('ollama', 'baseUrl')
 
-export const resolveVllmServiceConfig = createServiceResolver('vllm', readApiKeyAndBaseUrlConfig)
+export const resolveVllmServiceConfig = createServiceResolver('vllm', (config) => ({
+  ...readApiKeyAndBaseUrlConfig(config),
+  copilotContextWindow: asNumber(config.copilotContextWindow),
+  copilotMaxToolIterations: asNumber(config.copilotMaxToolIterations),
+  copilotTemperature: asNumber(config.copilotTemperature),
+  copilotEnableThinking: asBoolean(config.copilotEnableThinking),
+}))
 
 export const resolveFireworksServiceConfig = createServiceResolver('fireworks', readApiKeyConfig)
 

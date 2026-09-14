@@ -17,7 +17,7 @@ import {
 import { projectExecutionLogContext } from '@/lib/copilot/execution-log-context'
 import { verifyWorkflowAccess } from '@/lib/copilot/review-sessions/permissions'
 import { REVIEW_ITEM_KINDS } from '@/lib/copilot/review-sessions/thread-history'
-import { ENTITY_KIND_KNOWLEDGE_BASE } from '@/lib/copilot/review-sessions/types'
+import { ENTITY_KIND_KNOWLEDGE_BASE, ENTITY_KIND_SKILL } from '@/lib/copilot/review-sessions/types'
 import { readCopilotWorkspaceEntityContext } from '@/lib/copilot/workspace-entities'
 import { createLogger } from '@/lib/logs/console/logger'
 import { buildWorkspaceAccessScope } from '@/lib/permissions/utils'
@@ -127,6 +127,28 @@ export async function processContextsServer(
             type: entityContext.current ? 'current_knowledge_base' : 'knowledge_base',
             tag: `@${entityContext.entityId}`,
             content: stringifyBoundedContext(knowledgeBase, {
+              entityId: entityContext.entityId,
+            }),
+          }
+        }
+        // A skill mentioned in the active workspace is instructions the user wants
+        // applied now, so its content travels with the message instead of an id
+        // the model would first have to read. Elsewhere it stays a reference.
+        if (
+          entityContext.entityKind === ENTITY_KIND_SKILL &&
+          workspaceId &&
+          contextWorkspaceId === workspaceId
+        ) {
+          const { readSkillServerTool } = await import('@/lib/copilot/tools/server/entities/skill')
+          const skillDocument = await readSkillServerTool.execute(
+            { entityId: entityContext.entityId },
+            { userId, workspaceId, ...(options.signal ? { signal: options.signal } : {}) }
+          )
+          throwIfContextProcessingAborted(options.signal)
+          return {
+            type: ctx.kind,
+            tag: `@${entityContext.entityId}`,
+            content: stringifyBoundedContext(skillDocument, {
               entityId: entityContext.entityId,
             }),
           }
