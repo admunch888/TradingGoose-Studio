@@ -18,6 +18,10 @@ import {
   dropsAcceptedLiveMutation,
   EDIT_REPLAY_BLOCKED_MESSAGE,
 } from '@/lib/copilot/chat-replay-safety'
+import {
+  isLocalWorkingItem,
+  rebaseLocalWorkingRows,
+} from '@/lib/copilot/local-runtime/working-rows'
 import { loadReviewSessionForUser } from '@/lib/copilot/review-sessions/permissions'
 import {
   deriveReviewTurnsAndItems,
@@ -138,7 +142,10 @@ export async function POST(req: NextRequest) {
         )
         .orderBy(asc(copilotReviewItems.sequence))
 
-      const currentMessages = currentItems.map(mapReviewItemToApi)
+      // The local Copilot's working rows are not transcript messages.
+      const currentMessages = currentItems
+        .filter((item) => !isLocalWorkingItem(item))
+        .map(mapReviewItemToApi)
       const nextMessages = messages
       persistedMessageCount = nextMessages.length
 
@@ -151,6 +158,18 @@ export async function POST(req: NextRequest) {
       if (latestTurnStatus == null && arePersistedMessagesEqual(currentMessages, nextMessages)) {
         return
       }
+
+      // The local Copilot's working history shares this table; replacing the
+      // transcript must not delete it (see rebaseLocalWorkingRows).
+      const localWorkingRows = rebaseLocalWorkingRows(
+        (
+          await tx
+            .select()
+            .from(copilotReviewItems)
+            .where(eq(copilotReviewItems.sessionId, reviewSessionId))
+            .orderBy(asc(copilotReviewItems.sequence))
+        ).filter(isLocalWorkingItem)
+      )
 
       await tx.delete(copilotReviewItems).where(eq(copilotReviewItems.sessionId, reviewSessionId))
       await tx.delete(copilotReviewTurns).where(eq(copilotReviewTurns.sessionId, reviewSessionId))
@@ -167,6 +186,10 @@ export async function POST(req: NextRequest) {
 
       if (nextHistory.items.length > 0) {
         await tx.insert(copilotReviewItems).values(nextHistory.items)
+      }
+
+      if (localWorkingRows.length > 0) {
+        await tx.insert(copilotReviewItems).values(localWorkingRows)
       }
 
       await tx

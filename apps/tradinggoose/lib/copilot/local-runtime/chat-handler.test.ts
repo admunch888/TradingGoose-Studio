@@ -1,5 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+type TurnResult = {
+  text: string
+  workingMessages: Array<Record<string, unknown>>
+  awaiting: { toolCallId: string; toolName: string } | null
+}
+
+const turnState = vi.hoisted(() => ({
+  result: { text: 'Hello', workingMessages: [], awaiting: null } as TurnResult,
+  /** Text of each working-history reply the handler saved. */
+  workingReplies: [] as string[],
+}))
+
 const capturedTurnCtx = vi.hoisted(() => ({
   accessLevel: undefined as string | undefined,
   contextEntityKind: undefined as string | undefined,
@@ -55,11 +67,25 @@ vi.mock('@/lib/copilot/local-runtime/agent', () => ({
       event: 'response.output_item.done',
       data: { item: { type: 'function_call', id: 'call_1', name: 'list_workflows' } },
     })
-    return { text: 'Hello', workingMessages: [], awaiting: null }
+    return turnState.result
   },
 }))
 
-import { handleLocalCopilotChat } from '@/lib/copilot/local-runtime/chat-handler'
+vi.mock('@/lib/copilot/local-runtime/persistence', () => ({
+  persistLocalWorkingMessage: async () => {},
+  persistLocalWorkingUserMessage: async () => {},
+  persistLocalWorkingAssistantMessage: async (params: { text: string }) => {
+    turnState.workingReplies.push(params.text)
+  },
+  persistLocalReviewMessage: async () => {},
+  appendLocalAssistantText: async () => {},
+  loadLocalWorkingMessages: async () => [{ role: 'user', content: 'Build the workflow' }],
+}))
+
+import {
+  handleLocalCopilotChat,
+  handleLocalCopilotContinuation,
+} from '@/lib/copilot/local-runtime/chat-handler'
 
 async function readFrames(response: Response) {
   const text = await new Response(response.body).text()
@@ -91,6 +117,8 @@ describe('local copilot chat handler', () => {
     capturedTurnCtx.contextEntityKind = undefined
     capturedTurnCtx.contextEntityId = undefined
     capturedTurnCtx.workspaceId = undefined
+    turnState.result = { text: 'Hello', workingMessages: [], awaiting: null }
+    turnState.workingReplies = []
   })
 
   it('returns headers that forbid transforming the stream', async () => {
@@ -167,5 +195,66 @@ describe('local copilot chat handler', () => {
     expect(capturedTurnCtx.contextEntityId).toBeUndefined()
     expect(capturedTurnCtx.contextEntityKind).toBeUndefined()
     expect(capturedTurnCtx.workspaceId).toBe('workspace-1')
+  })
+
+  const planStep = {
+    role: 'assistant',
+    content: 'Planning the workflow',
+    tool_calls: [
+      { id: 'call_plan', type: 'function', function: { name: 'plan', arguments: '{}' } },
+    ],
+  }
+
+  /**
+   * The step's text is saved with its plan call. Saving the turn's text as a
+   * reply as well put it between the call and the result the browser sends
+   * back, and SGLang refused the resumed request.
+   */
+  it('saves no working reply for a turn that stops for a browser tool', async () => {
+    turnState.result = {
+      text: 'Planning the workflow',
+      workingMessages: [{ role: 'user', content: 'Build the workflow' }, planStep],
+      awaiting: { toolCallId: 'call_plan', toolName: 'plan' },
+    }
+
+    await readFrames(await startTurn())
+
+    expect(turnState.workingReplies).toEqual([])
+  })
+
+  it('saves only the final reply of a finished turn', async () => {
+    turnState.result = {
+      text: 'Checking blocks. The workflow is ready.',
+      workingMessages: [
+        { role: 'user', content: 'Build the workflow' },
+        { ...planStep, content: 'Checking blocks. ' },
+        { role: 'tool', tool_call_id: 'call_plan', content: '{"ok":true}' },
+        { role: 'assistant', content: 'The workflow is ready.' },
+      ],
+      awaiting: null,
+    }
+
+    await readFrames(await startTurn())
+
+    expect(turnState.workingReplies).toEqual(['The workflow is ready.'])
+  })
+
+  it('saves no working reply when a continuation stops for another browser tool', async () => {
+    turnState.result = {
+      text: 'Planning again',
+      workingMessages: [{ role: 'user', content: 'Build the workflow' }, planStep],
+      awaiting: { toolCallId: 'call_plan', toolName: 'plan' },
+    }
+
+    const stream = await handleLocalCopilotContinuation({
+      model: 'qwen3.8-fp8',
+      reviewSessionId: 'session-1',
+      userId: 'user-1',
+      requestId: 'req-1',
+      continuation: { toolCallId: 'call_previous', toolName: 'plan', status: 200 },
+    })
+    await new Response(stream).text()
+
+    expect(turnState.workingReplies).toEqual([])
   })
 })

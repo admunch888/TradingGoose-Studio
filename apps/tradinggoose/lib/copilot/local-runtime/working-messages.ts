@@ -109,34 +109,50 @@ export function buildLocalWorkingMessages(params: {
  * failed with a 400 on every continuation. Unanswered calls are dropped (an
  * assistant step left with no calls keeps its text, or goes), and so are
  * orphan results.
+ *
+ * Each result is placed right after its call. A turn that stopped for a browser
+ * tool used to save its reply text after the call, so the result the browser
+ * sent back followed that text and the resumed request was refused.
  */
 export function repairToolCallPairs(messages: LocalWorkingMessage[]): LocalWorkingMessage[] {
-  const answered = new Set(
-    messages.filter(isToolMessage).map((message) => message.tool_call_id as string)
-  )
-  const called = new Set<string>()
+  const placed = new Set<number>()
   const repaired: LocalWorkingMessage[] = []
+  // The first unplaced result for a call after it; call ids such as `call_0`
+  // repeat across steps when the server sends none.
+  const findResult = (callId: string, callIndex: number) =>
+    messages.findIndex(
+      (message, index) =>
+        index > callIndex &&
+        !placed.has(index) &&
+        isToolMessage(message) &&
+        message.tool_call_id === callId
+    )
 
-  for (const message of messages) {
-    if (isToolMessage(message)) {
-      if (called.has(message.tool_call_id as string)) repaired.push(message)
-      continue
-    }
+  messages.forEach((message, index) => {
+    // Results are placed with their call; one no call claims is an orphan.
+    if (isToolMessage(message)) return
     if (message.role === 'assistant' && message.tool_calls?.length) {
-      const calls = message.tool_calls.filter((call) => answered.has(call.id))
-      calls.forEach((call) => called.add(call.id))
-      if (calls.length > 0) {
+      const answered = message.tool_calls.flatMap((call) => {
+        const resultIndex = findResult(call.id, index)
+        if (resultIndex === -1) return []
+        placed.add(resultIndex)
+        return [{ call, result: messages[resultIndex] }]
+      })
+      if (answered.length > 0) {
         repaired.push(
-          calls.length === message.tool_calls.length ? message : { ...message, tool_calls: calls }
+          answered.length === message.tool_calls.length
+            ? message
+            : { ...message, tool_calls: answered.map((entry) => entry.call) }
         )
+        repaired.push(...answered.map((entry) => entry.result))
       } else if (message.content?.trim()) {
         const { tool_calls: _dropped, ...textOnly } = message
         repaired.push(textOnly)
       }
-      continue
+      return
     }
     repaired.push(message)
-  }
+  })
 
   return repaired
 }
