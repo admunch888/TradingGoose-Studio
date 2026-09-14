@@ -42,14 +42,33 @@ Set these environment variables for the app:
 | `IBKR_TOKEN_ENDPOINT` | OAuth2 token endpoint (hosted API only) | `https://api.ibkr.com/v1/api/oauth2/token` |
 | `IBKR_API_IP` | IP header sent with hosted API requests | `127.0.0.1` |
 | `IBKR_ORDER_CONFIRM_MESSAGE_IDS` | Order warnings to confirm automatically (see below) | `o10151,o10152,o10288,o10331` |
+| `IBKR_GATEWAY_ALLOWED_EMAILS` | Users allowed to connect through the gateway (comma-separated emails, or `*`) | none |
 
 ## Connecting an account
 
-1. Open **Connections** in the workspace.
-2. Choose **IBKR Live** or **IBKR Paper**.
-3. Complete the connection flow.
-4. The connected account becomes available as a trading provider for order
-   actions, portfolio detail, and portfolio-state monitors.
+IBKR connects through the Client Portal Gateway's own login rather than an
+OAuth sign-in, which IBKR only offers to approved third-party vendors.
+
+1. Start the gateway and log in to your paper or live account at the gateway
+   URL in a browser.
+2. Add your TradingGoose email to `IBKR_GATEWAY_ALLOWED_EMAILS` and restart
+   the app.
+3. In **Integrations** (or from a trading account selector), connect
+   **IBKR Paper** or **IBKR Live** - whichever matches the account the
+   gateway is logged in to.
+4. The gateway's account becomes available for order actions, portfolio
+   detail, and portfolio-state monitors.
+
+TradingGoose checks that the gateway is logged in and refuses to connect IBKR
+Paper to a live account (or IBKR Live to a paper account). If the gateway
+session expires, log in at the gateway again; the connection does not need to
+be recreated.
+
+<Callout type="warning">
+  A gateway holds a single brokerage login. Every user listed in
+  <code>IBKR_GATEWAY_ALLOWED_EMAILS</code> trades that same account, so list
+  only people who should have access to it.
+</Callout>
 
 ## Supported capabilities
 
