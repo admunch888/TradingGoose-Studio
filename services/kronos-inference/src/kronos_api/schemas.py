@@ -18,9 +18,7 @@ class ApiModel(BaseModel):
     )
 
 
-class ListingIdentity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ListingIdentity(ApiModel):
     listing_id: str = Field(min_length=1, max_length=255)
     listing_type: str = Field(min_length=1, max_length=64)
 

@@ -68,6 +68,16 @@ spec:
     - protocol: TCP
       port: {{ .Values.ollama.service.targetPort }}
   {{- end }}
+  # Allow egress to Kronos
+  {{- if .Values.kronos.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "tradinggoose.kronos.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.kronos.service.targetPort }}
+  {{- end }}
   # Allow DNS resolution
   - to: []
     ports:
@@ -238,5 +248,41 @@ spec:
     ports:
     - protocol: TCP
       port: 443
+{{- end }}
+
+{{- if .Values.kronos.enabled }}
+---
+# Network Policy for Kronos
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tradinggoose.fullname" . }}-kronos
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tradinggoose.kronos.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tradinggoose.kronos.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from main application
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "tradinggoose.app.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.kronos.service.targetPort }}
+  egress:
+  # Weights are baked into the image, so only DNS is needed
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
 {{- end }}
 {{- end }}

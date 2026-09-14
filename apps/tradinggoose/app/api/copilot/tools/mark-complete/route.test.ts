@@ -32,20 +32,10 @@ function createMarkCompleteRequest(data?: Record<string, unknown>): NextRequest 
 }
 
 /**
- * The route resolves the runtime model from the session row it loaded, so a
- * stored model that the local runtime wrote reads back as `<prefix><model>`.
- *
- * The pre-existing `isCopilotLocalRuntimeModel` guard in the local branch
- * compares the model value the branch recovered, and the pre-fix code recovered
- * it through a helper that strips the runtime prefix. A stored model therefore
- * has to carry a repeated prefix for the guard to match and the local branch to
- * run at all. That pre-existing mismatch is untouched by this fix (it is called
- * out in the PR body); LOCAL_BRANCH_SESSION_MODEL is the shape the branch
- * requires, so the ownership gate is exercised on both the reject and the allow
- * side. LOCAL_SESSION_MODEL is the ordinary shape a local turn writes.
+ * The shape the local runtime writes to the session row (`<prefix><model>`).
+ * The route must recognise it as local and hand the bare model to the runtime.
  */
 const LOCAL_SESSION_MODEL = `${LOCAL_COPILOT_MODEL_PREFIX}llama-3`
-const LOCAL_BRANCH_SESSION_MODEL = `${LOCAL_COPILOT_MODEL_PREFIX}${LOCAL_SESSION_MODEL}`
 
 describe('Copilot mark-complete API', () => {
   let POST: typeof import('./route').POST
@@ -255,7 +245,7 @@ describe('Copilot mark-complete API', () => {
     // The victim's session exists, but the ownership helper resolves it as
     // inaccessible for this caller.
     mockLoadReviewSessionForUser.mockResolvedValue(null)
-    storedSessionModel = LOCAL_BRANCH_SESSION_MODEL
+    storedSessionModel = LOCAL_SESSION_MODEL
 
     const response = await POST(
       createMarkCompleteRequest({ local: true, reviewSessionId: 'victim-session-id' })
@@ -281,9 +271,9 @@ describe('Copilot mark-complete API', () => {
       id: 'review-session-1',
       userId: 'user-1',
       entityKind: 'workflow',
-      model: LOCAL_BRANCH_SESSION_MODEL,
+      model: LOCAL_SESSION_MODEL,
     })
-    storedSessionModel = LOCAL_BRANCH_SESSION_MODEL
+    storedSessionModel = LOCAL_SESSION_MODEL
 
     const response = await POST(
       createMarkCompleteRequest({ local: true, reviewSessionId: 'review-session-1' })
@@ -299,9 +289,9 @@ describe('Copilot mark-complete API', () => {
       id: 'review-session-1',
       userId: 'user-1',
       entityKind: COPILOT_SESSION_KIND,
-      model: LOCAL_BRANCH_SESSION_MODEL,
+      model: LOCAL_SESSION_MODEL,
     })
-    storedSessionModel = LOCAL_BRANCH_SESSION_MODEL
+    storedSessionModel = LOCAL_SESSION_MODEL
 
     const response = await POST(
       createMarkCompleteRequest({ local: true, reviewSessionId: 'review-session-1' })
@@ -319,10 +309,11 @@ describe('Copilot mark-complete API', () => {
       message: 'ok',
       data: { local: true, reviewSessionId: 'review-session-1' },
     })
-    // The model is derived from the owned session row, not read back by id.
+    // The model is derived from the owned session row, not read back by id, and
+    // reaches the runtime without its `vllm/` prefix.
     expect(mockHandleLocalCopilotContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: LOCAL_SESSION_MODEL,
+        model: 'llama-3',
         reviewSessionId: 'review-session-1',
         userId: 'user-1',
       })
@@ -347,5 +338,22 @@ describe('Copilot mark-complete API', () => {
     expect(mockLoadReviewSessionForUser).toHaveBeenCalledWith('review-session-1', 'user-1')
     expect(response.status).not.toBe(404)
     expect(response.status).toBe(200)
+    // A single-prefix stored model runs locally; it must not fall through to the hosted proxy.
+    expect(mockHandleLocalCopilotContinuation).toHaveBeenCalled()
+    expect(mockProxyCopilotRequest).not.toHaveBeenCalled()
+  })
+
+  it('does not run the local runtime for a session on a hosted model', async () => {
+    mockLoadReviewSessionForUser.mockResolvedValue({
+      id: 'review-session-1',
+      userId: 'user-1',
+      entityKind: COPILOT_SESSION_KIND,
+      model: 'anthropic/claude-opus-5',
+    })
+
+    await POST(createMarkCompleteRequest({ local: true, reviewSessionId: 'review-session-1' }))
+
+    expect(mockPersistLocalContinuation).not.toHaveBeenCalled()
+    expect(mockHandleLocalCopilotContinuation).not.toHaveBeenCalled()
   })
 })
