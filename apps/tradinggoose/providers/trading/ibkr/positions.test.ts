@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeIbkrPositions } from '@/providers/trading/ibkr/positions'
+import {
+  buildIbkrFuturesPositionSymbol,
+  normalizeIbkrPositions,
+} from '@/providers/trading/ibkr/positions'
 
 const context = {
   providerId: 'ibkr' as const,
@@ -110,5 +113,55 @@ describe('normalizeIbkrPositions', () => {
 
     expect(positions[0]?.assetClass ?? positions[0]?.multiplier).toBe(50)
     expect(positions[0]?.quantity).toBe(2)
+  })
+
+  it('gives each position a listing supplied by identity so its quotes skip the catalogue', () => {
+    const positions = normalizeIbkrPositions(
+      [
+        { ticker: 'AAPL', assetClass: 'STK', listingExchange: 'NASDAQ', position: 10 },
+        {
+          ticker: 'MES',
+          assetClass: 'FUT',
+          listingExchange: 'CME',
+          expiry: '20261218',
+          position: 1,
+        },
+        { ticker: 'ES', assetClass: 'FUT', position: 1 },
+      ],
+      context
+    )
+
+    expect(positions.map((position) => position.listingIdentity)).toEqual([
+      {
+        listing_id: 'AAPL',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default',
+        manual: { assetClass: 'stock', marketCode: 'NASDAQ' },
+      },
+      {
+        listing_id: 'MESZ26',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default',
+        manual: { assetClass: 'future', marketCode: 'CME' },
+      },
+      {
+        listing_id: 'ES',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default',
+        manual: { assetClass: 'future' },
+      },
+    ])
+  })
+})
+
+describe('buildIbkrFuturesPositionSymbol', () => {
+  it('spells the contract month from the expiry', () => {
+    expect(buildIbkrFuturesPositionSymbol('MES', '20261218')).toBe('MESZ26')
+    expect(buildIbkrFuturesPositionSymbol('ES', '202703')).toBe('ESH27')
+    expect(buildIbkrFuturesPositionSymbol('ES', undefined)).toBe('ES')
+    expect(buildIbkrFuturesPositionSymbol('ES', 'soon')).toBe('ES')
   })
 })

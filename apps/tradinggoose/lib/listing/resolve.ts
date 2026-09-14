@@ -6,7 +6,7 @@ import {
 } from '@/lib/listing/identity'
 import { buildManualListingValue } from '@/lib/listing/manual'
 import { MARKET_API_VERSION, MARKET_BATCH_ID_LIMIT } from '@/lib/market/client/constants'
-import { getBaseUrl } from '@/lib/urls/utils'
+import { getInternalAppUrl } from '@/lib/urls/utils'
 
 type ResolvedListingDetails = Partial<Omit<ListingResolved, 'listingIdentity'>>
 
@@ -29,7 +29,7 @@ const buildMarketGetUrl = (path: string, params: URLSearchParams) => {
     return relativeUrl
   }
 
-  return new URL(relativeUrl, getBaseUrl()).toString()
+  return new URL(relativeUrl, getInternalAppUrl()).toString()
 }
 
 export const uniqueNonEmpty = (values: string[]) => {
