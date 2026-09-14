@@ -294,4 +294,105 @@ describe('kronos forecast route', () => {
     ])
     expect(mocks.callKronosForecast).not.toHaveBeenCalled()
   })
+
+  describe('future timestamps follow the trading calendar in the history', () => {
+    const DAY_MS = 86_400_000
+
+    const buildSeriesAt = (timestamps: number[]) => ({
+      listing,
+      timezone: 'America/New_York',
+      normalizationMode: 'raw',
+      bars: timestamps.map((timestamp, index) => ({
+        timeStamp: new Date(timestamp).toISOString(),
+        open: 100 + index,
+        high: 101 + index,
+        low: 99 + index,
+        close: 100.5 + index,
+        volume: 1000 + index,
+      })),
+    })
+
+    const forecastTimestamps = () =>
+      (mocks.callKronosForecast.mock.calls[0] as [{ futureTimestamps: string[] }])[0]
+        .futureTimestamps
+
+    it('skips the weekend for daily bars and keeps local midnight across DST', async () => {
+      // Weekday daily bars at 00:00 New York (05:00Z in EST), ending Friday 2026-03-06.
+      const timestamps: number[] = []
+      for (let cursor = Date.parse('2026-03-06T05:00:00.000Z'); timestamps.length < 40; ) {
+        const weekday = new Date(cursor).getUTCDay()
+        if (weekday !== 0 && weekday !== 6) timestamps.unshift(cursor)
+        cursor -= DAY_MS
+      }
+
+      const response = await POST(
+        buildRequest(
+          buildBlockPayload({
+            marketSeries: buildSeriesAt(timestamps),
+            interval: '1d',
+            horizonBars: 3,
+          })
+        )
+      )
+
+      expect(response.status).toBe(200)
+      // Monday next; New York moves to EDT on 2026-03-08, so midnight is 04:00Z.
+      expect(forecastTimestamps()).toEqual([
+        '2026-03-09T04:00:00.000Z',
+        '2026-03-10T04:00:00.000Z',
+        '2026-03-11T04:00:00.000Z',
+      ])
+    })
+
+    it('rolls intraday bars from the session close to the next trading day open', async () => {
+      // Two full regular sessions of 5m bars, 09:30-15:55 New York, Thursday and Friday.
+      const timestamps: number[] = []
+      for (const day of ['2026-01-08', '2026-01-09']) {
+        const open = Date.parse(`${day}T14:30:00.000Z`)
+        for (let bar = 0; bar < 78; bar++) timestamps.push(open + bar * INTERVAL_MS)
+      }
+
+      const response = await POST(
+        buildRequest(
+          buildBlockPayload({
+            marketSeries: buildSeriesAt(timestamps),
+            interval: '5m',
+            horizonBars: 2,
+          })
+        )
+      )
+
+      expect(response.status).toBe(200)
+      expect(forecastTimestamps()).toEqual(['2026-01-12T14:30:00.000Z', '2026-01-12T14:35:00.000Z'])
+    })
+
+    it('keeps weekends for a listing whose history trades them', async () => {
+      // Consecutive daily bars (crypto), ending Friday 2026-01-09.
+      const end = Date.parse('2026-01-09T00:00:00.000Z')
+      const timestamps = Array.from({ length: 40 }, (_, index) => end - (39 - index) * DAY_MS)
+
+      const response = await POST(
+        buildRequest(
+          buildBlockPayload({
+            marketSeries: buildSeriesAt(timestamps),
+            interval: '1d',
+            timezone: 'UTC',
+            horizonBars: 2,
+          })
+        )
+      )
+
+      expect(response.status).toBe(200)
+      expect(forecastTimestamps()).toEqual(['2026-01-10T00:00:00.000Z', '2026-01-11T00:00:00.000Z'])
+    })
+
+    it('rejects an unknown timezone with 400 (not 502)', async () => {
+      const response = await POST(
+        buildRequest(buildBlockPayload({ timezone: 'Mars/Olympus_Mons' }))
+      )
+
+      expect(response.status).toBe(400)
+      expect(mocks.callKronosForecast).not.toHaveBeenCalled()
+    })
+  })
 })

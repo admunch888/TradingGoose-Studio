@@ -219,6 +219,9 @@ Validate required secrets and reject default placeholder values
 {{- if and .Values.externalDatabase.enabled (not .Values.externalDatabase.password) }}
 {{- fail "externalDatabase.password is required when using external database" }}
 {{- end }}
+{{- if and .Values.kronos.enabled (lt (len (.Values.kronos.apiToken | default "")) 32) }}
+{{- fail "kronos.apiToken must be at least 32 characters when kronos.enabled is true. Generate one with: openssl rand -hex 32" }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -232,6 +235,30 @@ Ollama URL
 {{- else }}
 {{- .Values.app.env.OLLAMA_URL | default "http://localhost:11434" }}
 {{- end }}
+{{- end }}
+
+{{/*
+Kronos specific labels
+*/}}
+{{- define "tradinggoose.kronos.labels" -}}
+{{ include "tradinggoose.labels" . }}
+app.kubernetes.io/component: kronos
+{{- end }}
+
+{{/*
+Kronos selector labels
+*/}}
+{{- define "tradinggoose.kronos.selectorLabels" -}}
+{{ include "tradinggoose.selectorLabels" . }}
+app.kubernetes.io/component: kronos
+{{- end }}
+
+{{/*
+Kronos URL
+*/}}
+{{- define "tradinggoose.kronosUrl" -}}
+{{- $serviceName := printf "%s-kronos" (include "tradinggoose.fullname" .) }}
+{{- printf "http://%s:%v" $serviceName .Values.kronos.service.port }}
 {{- end }}
 
 {{/*

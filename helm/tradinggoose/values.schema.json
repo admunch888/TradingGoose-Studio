@@ -603,6 +603,31 @@
         }
       }
     },
+    "kronos": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable the Kronos forecasting service"
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of Kronos replicas"
+        },
+        "apiToken": {
+          "type": "string",
+          "description": "Shared bearer token for the service and the app (32+ characters when enabled)"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra KRONOS_* service settings"
+        }
+      }
+    },
     "telemetry": {
       "type": "object",
       "properties": {
