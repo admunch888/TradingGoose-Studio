@@ -24,6 +24,15 @@ const TRADING_ASSET_CLASS_SET = new Set<AssetClass>([
   'mutualfund',
 ])
 
+/**
+ * A catalogue reference id (`TG_LSTG_…`, `TG_CRYP_…`, `TG_CURR_…`) names a row
+ * in the hosted listing catalogue; it is never a symbol a broker trades.
+ */
+const CATALOGUE_REFERENCE_ID = /^TG_(LSTG|CRYP|CURR)_/i
+
+export const UNRESOLVED_CATALOGUE_LISTING_MESSAGE =
+  'This listing could not be looked up in the market catalogue, so its trading symbol is unknown. Select the instrument again (for IBKR, pick it from IBKR search) and retry.'
+
 interface TradingListingContext {
   listing?: ListingIdentity | null
   base: string
@@ -108,6 +117,14 @@ function buildTradingListingContext(input: TradingSymbolInput): TradingListingCo
     (listingIdentity && listingIdentity.listing_type !== 'default'
       ? listingIdentity.quote_id || undefined
       : undefined)
+
+  // Falling back to the identity's ids is only sound when they are symbols. A
+  // catalogue listing whose details could not be fetched (the catalogue was
+  // rate limited) left its reference id here, and the broker was asked for a
+  // contract called `TG_LSTG_1C3763`. Refuse it with a message the user can act on.
+  if (CATALOGUE_REFERENCE_ID.test(base) || (quote && CATALOGUE_REFERENCE_ID.test(quote))) {
+    throw new Error(UNRESOLVED_CATALOGUE_LISTING_MESSAGE)
+  }
 
   const assetClass =
     input.assetClass ||

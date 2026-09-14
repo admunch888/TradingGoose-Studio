@@ -6,6 +6,7 @@ import {
   listingIdentityToTradingSymbol,
   resolveTradingListingAssetClass,
   tradingSymbolToListingIdentity,
+  UNRESOLVED_CATALOGUE_LISTING_MESSAGE,
 } from '@/providers/trading/utils'
 
 const stockListing: ListingResolved = {
@@ -234,5 +235,63 @@ describe('trading listing utility helpers', () => {
       quote: 'USD',
       assetClass: 'crypto',
     })
+  })
+
+  it('never sends a catalogue reference id to a broker as a symbol', () => {
+    // A catalogue listing whose details could not be fetched arrives with only
+    // its identity; its reference id is not a tradable symbol.
+    expect(() =>
+      listingIdentityToTradingSymbol(alpacaTradingProviderConfig, {
+        listing: {
+          listing_type: 'default',
+          listing_id: 'TG_LSTG_1C3763',
+          base_id: '',
+          quote_id: '',
+        },
+        assetClass: 'future',
+      })
+    ).toThrow(UNRESOLVED_CATALOGUE_LISTING_MESSAGE)
+
+    expect(() =>
+      listingIdentityToTradingSymbol(alpacaTradingProviderConfig, {
+        listing: {
+          listing_type: 'crypto',
+          listing_id: '',
+          base_id: 'TG_CRYP_BTC',
+          quote_id: 'TG_CURR_USD',
+        },
+        assetClass: 'crypto',
+      })
+    ).toThrow(UNRESOLVED_CATALOGUE_LISTING_MESSAGE)
+
+    // A resolved catalogue listing trades by its resolved base, and a listing
+    // supplied by identity by its own symbol.
+    expect(
+      listingIdentityToTradingSymbol(alpacaTradingProviderConfig, {
+        listing: {
+          listingIdentity: {
+            listing_type: 'default',
+            listing_id: 'TG_LSTG_1C3763',
+            base_id: '',
+            quote_id: '',
+          },
+          base: 'AAPL',
+          quote: 'USD',
+          assetClass: 'stock',
+        },
+      })
+    ).toBe('AAPL')
+    expect(
+      listingIdentityToTradingSymbol(alpacaTradingProviderConfig, {
+        listing: {
+          listing_type: 'default',
+          listing_id: 'MESZ26',
+          base_id: '',
+          quote_id: '',
+          manual: { assetClass: 'future', marketCode: 'CME' },
+        },
+        assetClass: 'future',
+      })
+    ).toBe('MESZ26')
   })
 })
