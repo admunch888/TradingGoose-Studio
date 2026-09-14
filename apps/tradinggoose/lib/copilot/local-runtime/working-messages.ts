@@ -142,6 +142,39 @@ export function repairToolCallPairs(messages: LocalWorkingMessage[]): LocalWorki
 }
 
 /**
+ * Tool call arguments as a JSON object string. The model streams arguments as
+ * text, and a fragment that is not a JSON object (cut off, empty, or an array)
+ * is executed as `{}`. Replaying the raw text made the next request fail:
+ * SGLang parses each call's arguments to render the Qwen chat template and
+ * answers a failure with 400 before prefill, so the turn died right after its
+ * first tool call.
+ */
+export function normalizeToolCallArguments(value: string | null | undefined): string {
+  if (!value?.trim()) return '{}'
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? JSON.stringify(parsed)
+      : '{}'
+  } catch {
+    return '{}'
+  }
+}
+
+const normalizeStoredToolCalls = (message: LocalWorkingMessage): LocalWorkingMessage => {
+  if (!message.tool_calls?.length) return message
+  const toolCalls = message.tool_calls.map((call) => {
+    const args = normalizeToolCallArguments(call.function.arguments)
+    return args === call.function.arguments
+      ? call
+      : { ...call, function: { ...call.function, arguments: args } }
+  })
+  return toolCalls.every((call, index) => call === message.tool_calls?.[index])
+    ? message
+    : { ...message, tool_calls: toolCalls }
+}
+
+/**
  * How much of an older tool result the rebuilt history carries. Block and
  * workflow metadata results run to hundreds of kilobytes; replaying them whole
  * pushed the conversation itself out of the context budget.
@@ -171,7 +204,8 @@ export function trimLocalWorkingMessages(
   messages: LocalWorkingMessage[],
   options: { systemPrompt: string; contextWindow?: number }
 ): LocalWorkingMessage[] {
-  messages = repairToolCallPairs(messages).map(compactToolResult)
+  // Sessions saved before arguments were normalized can still hold raw ones.
+  messages = repairToolCallPairs(messages).map(compactToolResult).map(normalizeStoredToolCalls)
   const contextWindow = options.contextWindow ?? DEFAULT_LOCAL_CONTEXT_WINDOW
   const systemMessage: LocalWorkingMessage = { role: 'system', content: options.systemPrompt }
 

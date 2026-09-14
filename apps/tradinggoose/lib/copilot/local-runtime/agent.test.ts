@@ -187,3 +187,43 @@ describe('local agent client-only tool handoff', () => {
     expect(frames.some((frame) => frame.event === 'tool_result')).toBe(true)
   })
 })
+
+describe('local agent tool call arguments', () => {
+  const replayedArguments = () => {
+    const messages = mockState.createBodies[1]?.messages as Array<{
+      tool_calls?: Array<{ function: { arguments: string } }>
+    }>
+    return messages.flatMap((message) => message.tool_calls ?? []).map((c) => c.function.arguments)
+  }
+
+  it.each([
+    ['cut off', '{"workflowId":'],
+    ['an array', '[1,2]'],
+    ['empty', ''],
+  ])('replays arguments that are %s as an empty object', async (_label, args) => {
+    mockState.streams = [
+      toolCallChunks('list_workflows', 'call_bad', args),
+      [{ choices: [{ delta: { content: 'done' } }] }],
+    ]
+    const { sink } = recorder()
+
+    await runLocalCopilotTurn(turnParams(sink))
+
+    expect(replayedArguments()).toEqual(['{}'])
+  })
+
+  it('replays valid arguments as compact JSON', async () => {
+    mockState.streams = [
+      toolCallChunks('list_workflows', 'call_ok', '{ "workspaceId": "ws-1" }'),
+      [{ choices: [{ delta: { content: 'done' } }] }],
+    ]
+    const { frames, sink } = recorder()
+
+    await runLocalCopilotTurn(turnParams(sink))
+
+    expect(replayedArguments()).toEqual(['{"workspaceId":"ws-1"}'])
+    expect(functionCallFrames(frames, 'list_workflows')[0]?.item?.arguments).toBe(
+      '{"workspaceId":"ws-1"}'
+    )
+  })
+})

@@ -3,6 +3,7 @@ import {
   buildLocalWorkingMessages,
   type LocalWorkingMessage,
   MAX_HISTORY_TOOL_RESULT_CHARS,
+  normalizeToolCallArguments,
   summarizeWorkingMessages,
   trimLocalWorkingMessages,
 } from '@/lib/copilot/local-runtime/working-messages'
@@ -79,6 +80,40 @@ describe('trimming a continuation history', () => {
       { role: 'system', content: 'system' },
       ...history,
     ])
+  })
+})
+
+describe('tool call arguments in a saved history', () => {
+  it('rebuilds unparseable arguments as an empty object and keeps valid ones', () => {
+    const history: LocalWorkingMessage[] = [
+      { role: 'user', content: 'Build the workflow' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_bad',
+            type: 'function',
+            function: { name: 'get_blocks', arguments: '{"a":' },
+          },
+          { id: 'call_ok', type: 'function', function: { name: 'plan', arguments: '{"x": 1}' } },
+        ],
+      },
+      result('call_bad', '{"ok":true}'),
+      result('call_ok', '{"ok":true}'),
+    ]
+
+    const messages = trimLocalWorkingMessages(history, { systemPrompt: 'system' })
+
+    expect(messages[2]?.tool_calls?.map((c) => c.function.arguments)).toEqual(['{}', '{"x":1}'])
+  })
+
+  it('normalizeToolCallArguments accepts only JSON objects', () => {
+    expect(normalizeToolCallArguments('{"a":1}')).toBe('{"a":1}')
+    expect(normalizeToolCallArguments('{"a":')).toBe('{}')
+    expect(normalizeToolCallArguments('"text"')).toBe('{}')
+    expect(normalizeToolCallArguments('null')).toBe('{}')
+    expect(normalizeToolCallArguments(undefined)).toBe('{}')
   })
 })
 

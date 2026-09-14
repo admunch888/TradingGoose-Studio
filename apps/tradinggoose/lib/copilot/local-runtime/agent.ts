@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { describeModelServerError } from '@/lib/copilot/local-runtime/model-server-error'
 import { buildLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
 import {
@@ -10,6 +11,7 @@ import { withTimeout } from '@/lib/copilot/local-runtime/with-timeout'
 import {
   buildLocalWorkingMessages,
   type LocalWorkingMessage,
+  normalizeToolCallArguments,
   summarizeWorkingMessages,
 } from '@/lib/copilot/local-runtime/working-messages'
 import { loadLocalCopilotWorkspaceInstructions } from '@/lib/copilot/local-runtime/workspace-instructions'
@@ -249,6 +251,7 @@ export async function runLocalCopilotTurn(
           iteration,
           continuation: Boolean(params.continuation),
           ...summarizeWorkingMessages(workingMessages),
+          error: describeModelServerError(error),
         })
         throw error
       })
@@ -284,6 +287,19 @@ export async function runLocalCopilotTurn(
     const orderedCalls = [...toolCalls.values()]
       .sort((a, b) => a.index - b.index)
       .filter((call) => call.name)
+      .map((call) => {
+        // Executed, emitted and replayed as the same JSON object, so the next
+        // request never carries arguments the server cannot parse.
+        const args = normalizeToolCallArguments(call.arguments)
+        if (call.arguments.trim() && args === '{}' && call.arguments.trim() !== '{}') {
+          logger.warn('Local copilot tool call arguments were not a JSON object', {
+            conversationId: params.conversationId,
+            toolName: call.name,
+            argumentsLength: call.arguments.length,
+          })
+        }
+        return { ...call, arguments: args }
+      })
 
     // No tool calls -> the turn is complete.
     if (orderedCalls.length === 0) {
