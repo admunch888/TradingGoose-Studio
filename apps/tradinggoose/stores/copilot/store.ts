@@ -870,6 +870,7 @@ const createCopilotStoreInstance = (storeChannelId: string) => {
         const hasActiveToolCalls = hasUiActiveToolCalls(toolCallsById)
         if (!isSendingMessage && !isChatTurnInProgress(currentChat) && !hasActiveToolCalls) return
         set({ isAborting: true })
+        turnStoppedAtByStore.set(getCopilotStore(storeChannelId), Date.now())
         abortController?.abort()
         postCopilotAbort(currentChat)
         const lastMessage = messages[messages.length - 1]
@@ -1539,7 +1540,10 @@ registerCopilotStoreForToolCallResolver((toolCallId) => {
   return store
 })
 
-registerCopilotMarkCompleteContinuationHandler(async ({ toolCallId, response }) => {
+/** When the user last pressed Stop in each store. */
+const turnStoppedAtByStore = new WeakMap<StoreApi<CopilotStore>, number>()
+
+registerCopilotMarkCompleteContinuationHandler(async ({ toolCallId, response, postedAt }) => {
   const targetStore = findStoreForToolCall(toolCallId)
   if (!targetStore) {
     await response.body?.cancel().catch(() => {})
@@ -1557,7 +1561,19 @@ registerCopilotMarkCompleteContinuationHandler(async ({ toolCallId, response }) 
     return
   }
 
-  if (!isChatTurnInProgress(state.currentChat)) {
+  // Only a stop drops the resumed turn: the tool was aborted, or Stop was
+  // pressed after its completion was posted. The chat's turn status is not a
+  // stop. The stream that handed a browser tool over settles the turn as soon
+  // as that tool succeeds - before its mark-complete returns - so the status
+  // already read "completed" and every resumed turn was cancelled unseen, which
+  // left a self-hosted Copilot stopped after "Finished planning".
+  const stoppedAt = turnStoppedAtByStore.get(targetStore)
+  const stoppedAfterPosting =
+    stoppedAt !== undefined && (postedAt === undefined || stoppedAt >= postedAt)
+  if (
+    state.toolCallsById[toolCallId]?.state === ClientToolCallState.aborted ||
+    stoppedAfterPosting
+  ) {
     await response.body.cancel().catch(() => {})
     return
   }
@@ -1566,11 +1582,12 @@ registerCopilotMarkCompleteContinuationHandler(async ({ toolCallId, response }) 
     state.abortController && !state.abortController.signal.aborted
       ? state.abortController
       : new AbortController()
-  targetStore.setState({
+  targetStore.setState((currentState) => ({
+    ...buildChatTurnStatusState(currentState, ACTIVE_TURN_STATUS),
     abortController,
     isSendingMessage: true,
     isAwaitingContinuation: false,
-  })
+  }))
 
   await targetStore
     .getState()
