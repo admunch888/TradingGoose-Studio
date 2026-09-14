@@ -112,6 +112,25 @@ describe('fetchIbkrSeries against a refusing gateway', () => {
     expect(series.bars).toHaveLength(1)
   })
 
+  it('keeps bar prices as IBKR sends them when the response carries a priceFactor', async () => {
+    // IBKR's documented AAPL history response: `priceFactor` 100 scales only the
+    // encoded `high`/`low` envelope strings, not the bars.
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        symbol: 'AAPL',
+        priceFactor: 100,
+        high: '21394/266616.18/1440',
+        low: '20425/0/8640',
+        data: [{ t: 1747229400000, o: 212.43, h: 213.94, l: 210.58, c: 212.33, v: 266616.18 }],
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const series = await fetchIbkrSeries(request)
+
+    expect(series.bars[0]).toMatchObject({ open: 212.43, high: 213.94, low: 210.58, close: 212.33 })
+  })
+
   it('fails fast on a 401 without a single retry', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: 'not authenticated' }, 401))
     vi.stubGlobal('fetch', fetchMock)
