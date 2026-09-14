@@ -105,7 +105,10 @@ describe('TradingGoose Market request gate', () => {
     const [firstResponse, secondResponse] = await Promise.all([first, second])
     expect(await firstResponse.json()).toEqual({ data: { id: 'AAPL' } })
     expect(await secondResponse.json()).toEqual({ data: { id: 'AAPL' } })
-    expect(mockWriteServerJsonCache).toHaveBeenCalledTimes(1)
+    const freshWrites = mockWriteServerJsonCache.mock.calls.filter(([key]) =>
+      String(key).startsWith('market:request:v1:')
+    )
+    expect(freshWrites).toHaveLength(1)
   })
 
   it('does not read or write cache for update requests', async () => {
@@ -169,5 +172,84 @@ describe('TradingGoose Market request gate', () => {
 
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers
     expect(headers.get('x-api-key')).toBe('market-secret')
+  })
+
+  it('caches listing rows for hours and keeps a last good copy', async () => {
+    mockReadServerJsonCache.mockResolvedValue(null)
+    fetchMock.mockResolvedValue(new Response('{"data":{"id":"AAPL"}}', { status: 200 }))
+
+    const { requestTradingGooseMarket } = await import('./request-gate')
+    await requestTradingGooseMarket('/api/get/listing?listing_id=AAPL')
+
+    const writes = mockWriteServerJsonCache.mock.calls.map(([key, , ttl]) => [
+      String(key).split(':').slice(0, 3).join(':'),
+      ttl,
+    ])
+    expect(writes).toEqual([
+      ['market:request:v1', 60 * 60 * 6],
+      ['market:request:stale', 60 * 60 * 24 * 7],
+    ])
+  })
+
+  it('stops calling the catalogue after a rate-limit refusal until Retry-After passes', async () => {
+    mockReadServerJsonCache.mockResolvedValue(null)
+    fetchMock.mockImplementation(
+      () =>
+        new Response('{"error":"Free tier rate limit exceeded. Max 100 requests per minute."}', {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '30' },
+        })
+    )
+
+    const { requestTradingGooseMarket } = await import('./request-gate')
+    const first = await requestTradingGooseMarket('/api/search?search_query=MES')
+    const second = await requestTradingGooseMarket('/api/search?search_query=MESZ26')
+    const update = await requestTradingGooseMarket('/api/update/listing-rank', {
+      body: '{}',
+      method: 'POST',
+    })
+
+    expect(first.status).toBe(429)
+    expect(second.status).toBe(429)
+    expect(update.status).toBe(429)
+    expect(await second.json()).toEqual({
+      error: 'Free tier rate limit exceeded. Max 100 requests per minute.',
+    })
+    expect(Number(second.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(mockWriteServerJsonCache).not.toHaveBeenCalled()
+  })
+
+  it('serves the last good listing row while the catalogue refuses', async () => {
+    const stale = {
+      body: '{"data":{"id":"AAPL"}}',
+      headers: [['content-type', 'application/json']],
+      status: 200,
+    }
+    mockReadServerJsonCache.mockImplementation(async (key: string) =>
+      key.startsWith('market:request:stale:') ? stale : null
+    )
+    fetchMock.mockResolvedValue(
+      new Response('{"error":"rate limited"}', { status: 429, headers: { 'retry-after': '60' } })
+    )
+
+    const { requestTradingGooseMarket } = await import('./request-gate')
+    const refused = await requestTradingGooseMarket('/api/get/listing?listing_id=AAPL')
+    const cooling = await requestTradingGooseMarket('/api/get/listing?listing_id=AAPL')
+
+    expect(refused.status).toBe(200)
+    expect(await cooling.json()).toEqual({ data: { id: 'AAPL' } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads Retry-After as seconds or a date, within bounds', async () => {
+    const { parseRetryAfterMs } = await import('./request-gate')
+    const now = Date.parse('2026-09-13T12:00:00Z')
+
+    expect(parseRetryAfterMs('30', now)).toBe(30_000)
+    expect(parseRetryAfterMs(null, now)).toBe(60_000)
+    expect(parseRetryAfterMs('nonsense', now)).toBe(60_000)
+    expect(parseRetryAfterMs('3600', now)).toBe(5 * 60_000)
+    expect(parseRetryAfterMs('Sun, 13 Sep 2026 12:00:45 GMT', now)).toBe(45_000)
   })
 })

@@ -65,7 +65,7 @@ const normalizeConidKeyPart = (value?: string | null): string => {
  * F JAN  G FEB  H MAR  J APR  K MAY  M JUN  N JUL  Q AUG  U SEP  V OCT
  * X NOV  Z DEC
  */
-const IBKR_FUTURES_MONTH_NAMES: Record<string, string> = {
+export const IBKR_FUTURES_MONTH_NAMES: Record<string, string> = {
   F: 'JAN',
   G: 'FEB',
   H: 'MAR',
@@ -375,7 +375,7 @@ const nearestContractYear = (twoDigitYear: string, now: Date): number => {
  * what the API and the listing catalogue speak; a calendar month is what an
  * operator who was handed `MESZ25` needs in order to act.
  */
-const describeIbkrContractMonth = (month: string, now: Date): string | null => {
+export const describeIbkrContractMonth = (month: string, now: Date): string | null => {
   const parsed = parseIbkrContractMonth(month)
   if (!parsed) {
     return null
@@ -387,7 +387,7 @@ const describeIbkrContractMonth = (month: string, now: Date): string | null => {
  * Whether a contract month is already behind `now`. The month `now` is IN is
  * still tradeable, so only a strictly earlier month has expired.
  */
-const isIbkrContractMonthInThePast = (month: string, now: Date): boolean => {
+export const isIbkrContractMonthInThePast = (month: string, now: Date): boolean => {
   const parsed = parseIbkrContractMonth(month)
   if (!parsed) {
     return false

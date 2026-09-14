@@ -28,7 +28,11 @@ import {
   type ListingResolved,
   toListingValueObject,
 } from '@/lib/listing/identity'
-import { parseManualListingQuery, shouldOfferManualListing } from '@/lib/listing/manual'
+import {
+  buildManualListingValue,
+  parseManualListingQuery,
+  shouldOfferManualListing,
+} from '@/lib/listing/manual'
 import { cn } from '@/lib/utils'
 import { useAccessibleReferencePrefixes } from '@/hooks/workflow/use-accessible-reference-prefixes'
 import { useWorkspaceWidgetsMessages } from '@/i18n/workspace-widget-hooks'
@@ -220,14 +224,18 @@ export function ListingSearchInput({
     setShowTags(false)
     setVariableCommitted(false)
 
-    if (listing.listingIdentity.listing_type === 'default') {
-      triggerListingRankUpdate(listing)
-    }
-    if (listing.listingIdentity.listing_type === 'crypto' && listing.listingIdentity.base_id) {
-      triggerCryptoRankUpdate(listing.listingIdentity.base_id)
-    }
-    if (listing.listingIdentity.listing_type === 'currency' && listing.listingIdentity.base_id) {
-      triggerCurrencyRankUpdate(listing.listingIdentity.base_id)
+    // A listing supplied by identity (manual entry, IBKR search) has no
+    // catalogue row to rank, and ranking it would spend catalogue quota.
+    if (!listing.listingIdentity.manual) {
+      if (listing.listingIdentity.listing_type === 'default') {
+        triggerListingRankUpdate(listing)
+      }
+      if (listing.listingIdentity.listing_type === 'crypto' && listing.listingIdentity.base_id) {
+        triggerCryptoRankUpdate(listing.listingIdentity.base_id)
+      }
+      if (listing.listingIdentity.listing_type === 'currency' && listing.listingIdentity.base_id) {
+        triggerCurrencyRankUpdate(listing.listingIdentity.base_id)
+      }
     }
 
     onListingChange?.(listing)
@@ -417,6 +425,19 @@ export function ListingSearchInput({
 
     if (selectedListing) {
       hydrateRequestRef.current += 1
+      return
+    }
+
+    // A saved listing supplied by identity carries everything it can show; the
+    // catalogue has no row for it, so it is not asked.
+    if (identity.manual) {
+      hydrateRequestRef.current += 1
+      const resolved = buildManualListingValue({
+        symbol: identity.listing_id,
+        assetClass: identity.manual.assetClass,
+        marketCode: identity.manual.marketCode,
+      })
+      if (resolved) updateInstance(instanceId, { selectedListing: resolved })
       return
     }
 

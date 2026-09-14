@@ -166,7 +166,11 @@ describe('market proxy TradingGoose-Market gate', () => {
         method: 'GET',
       })
     )
-    expect(mockWriteServerJsonCache).toHaveBeenCalledTimes(1)
+    // The fresh entry, plus the last good copy served while the catalogue refuses.
+    expect(mockWriteServerJsonCache.mock.calls.map(([key]) => String(key).split(':')[2])).toEqual([
+      'v1',
+      'stale',
+    ])
   })
 
   it('does not read or write cache for update requests', async () => {

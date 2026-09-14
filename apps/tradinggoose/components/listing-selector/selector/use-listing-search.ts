@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { parseCategorizedSearchQuery } from '@/components/listing-selector/search-utils'
 import { buildMarketSearchRequest } from '@/components/listing-selector/selector/search-request'
 import {
   combineProviderSearchConfigs,
   useMarketProviderSearchConfig,
   useTradingProviderSearchConfig,
 } from '@/components/listing-selector/selector/use-provider-config'
+import { fetchIbkrListings, shouldSearchIbkrListings } from '@/lib/listing/ibkr-search'
 import type { ListingResolved } from '@/lib/listing/identity'
 import { fetchListings } from '@/lib/listing/search'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -146,15 +148,40 @@ export function useMarketListingSearch({
       return
     }
 
-    const { queryParams, requestKey } = buildMarketSearchRequest({
-      rawQuery: debouncedQuery,
-      providerConfig,
-      assetClassFilter,
-    })
-    if (Object.keys(queryParams).length === 0) {
-      abortInFlightRequest()
-      updateInstance(instanceId, { results: [], isLoading: false, error: undefined })
-      return
+    let requestKey: string
+    let runSearch: (signal: AbortSignal) => Promise<ListingResolved[]>
+
+    // IBKR answers its own listing search, so an IBKR picker never spends the
+    // hosted catalogue's request quota. It needs a symbol to search for.
+    if (
+      shouldSearchIbkrListings({
+        marketProviderId: marketSearchProviderId,
+        tradingProviderId: tradingSearchProviderId,
+      })
+    ) {
+      const parsedQuery = parseCategorizedSearchQuery(debouncedQuery)
+      const symbol = parsedQuery.baseQuery?.trim() ?? ''
+      const assetClass = assetClassFilter?.trim().toLowerCase() || parsedQuery.assetClass || null
+      if (!symbol) {
+        abortInFlightRequest()
+        updateInstance(instanceId, { results: [], isLoading: false, error: undefined })
+        return
+      }
+      requestKey = JSON.stringify({ provider: 'ibkr', symbol, assetClass })
+      runSearch = (signal) => fetchIbkrListings({ query: symbol, assetClass }, signal)
+    } else {
+      const { queryParams, requestKey: marketRequestKey } = buildMarketSearchRequest({
+        rawQuery: debouncedQuery,
+        providerConfig,
+        assetClassFilter,
+      })
+      if (Object.keys(queryParams).length === 0) {
+        abortInFlightRequest()
+        updateInstance(instanceId, { results: [], isLoading: false, error: undefined })
+        return
+      }
+      requestKey = marketRequestKey
+      runSearch = (signal) => fetchListings(queryParams, signal)
     }
 
     abortInFlightRequest()
@@ -164,7 +191,7 @@ export function useMarketListingSearch({
 
     updateInstance(instanceId, { isLoading: true, error: undefined })
 
-    const requestPromise = fetchListings(queryParams, controller.signal)
+    const requestPromise = runSearch(controller.signal)
 
     requestPromise
       .then((rows) => {

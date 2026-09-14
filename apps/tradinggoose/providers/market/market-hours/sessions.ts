@@ -364,6 +364,9 @@ export const resolveLatestSessionEndMs = async (
 
 export const resolveListingId = (listing?: MarketSeries['listing'] | null) => {
   if (!listing) return null
+  // A listing supplied by identity has no catalogue row, so the catalogue has
+  // no market hours for it either; asking only spends request quota.
+  if (listing.manual) return null
   if (listing.listing_type === 'default') return listing.listing_id?.trim() || null
   return null
 }
