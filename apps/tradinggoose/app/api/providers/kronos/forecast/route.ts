@@ -9,7 +9,11 @@ import {
   KronosErrorCode,
 } from '@/lib/kronos'
 import { type ForecastRequest, ForecastRequestSchema } from '@/lib/kronos/types'
-import { getListingIdentitySymbol, parseListingIdentityValueStrict } from '@/lib/listing/identity'
+import {
+  getListingIdentitySymbol,
+  type ListingIdentity,
+  parseListingIdentityValueStrict,
+} from '@/lib/listing/identity'
 import { createLogger } from '@/lib/logs/console/logger'
 import { generateRequestId } from '@/lib/utils'
 
@@ -19,7 +23,8 @@ const nonEmptyStringSchema = z.string().trim().min(1)
 
 // The block/tool payload. `workspaceId` is supplied by the framework as a query
 // param and `idempotencyKey` is not part of the current contract, so both are
-// accepted but optional.
+// accepted but optional. `listing` is optional: without it the market series'
+// own listing is used (see resolveForecastListing).
 const forecastRequestSchema = z
   .object({
     workspaceId: nonEmptyStringSchema.optional(),
@@ -331,8 +336,36 @@ const deriveFutureTimestamps = (
   return futureTimestamps
 }
 
+const isBlankListing = (value: unknown): boolean =>
+  value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+
+export const KRONOS_MISSING_LISTING_MESSAGE =
+  'Kronos needs a listing: set Listing, or pass the market series from a Historical Data block, which carries its listing.'
+
+/**
+ * The listing a forecast is for. An explicit listing wins; without one, the
+ * market series names it. The Historical Data block's series carries the listing
+ * it fetched, so a Kronos block wired to that series needs no listing search of
+ * its own - and cannot forecast a different instrument than the history it got.
+ *
+ * Resolved here rather than in the block, because the executor discards the
+ * block's params transform when it throws and dispatches the stored values.
+ */
+const resolveForecastListing = (listing: unknown, marketSeries: unknown): ListingIdentity => {
+  if (!isBlankListing(listing)) return parseListingIdentityValueStrict(listing)
+
+  const seriesListing =
+    marketSeries && typeof marketSeries === 'object'
+      ? (marketSeries as { listing?: unknown }).listing
+      : undefined
+  if (isBlankListing(seriesListing)) {
+    throw new Error(KRONOS_MISSING_LISTING_MESSAGE)
+  }
+  return parseListingIdentityValueStrict(seriesListing)
+}
+
 const buildForecastRequest = (requestId: string, body: ForecastRequestBody): unknown => {
-  const listing = parseListingIdentityValueStrict(body.listing)
+  const listing = resolveForecastListing(body.listing, body.marketSeries)
   const history = buildHistory(body.marketSeries)
   const historyTimestamps = history.map((bar) => bar.timestamp as string)
 

@@ -32,7 +32,7 @@ vi.mock('@/lib/utils', () => ({
   generateRequestId: vi.fn(() => 'kronos-forecast-test-1'),
 }))
 
-import { POST } from '@/app/api/providers/kronos/forecast/route'
+import { KRONOS_MISSING_LISTING_MESSAGE, POST } from '@/app/api/providers/kronos/forecast/route'
 import { kronosForecastTool } from '@/tools/kronos/forecast'
 
 // The listing payload the Historical Data block emits and Kronos blocks pass through.
@@ -138,6 +138,69 @@ describe('kronos forecast route', () => {
 
     expect(response.status).toBe(200)
     expect(mocks.callKronosForecast).toHaveBeenCalledTimes(1)
+  })
+
+  describe('the listing defaults to the one the market series carries', () => {
+    const forwardedListing = () =>
+      (mocks.callKronosForecast.mock.calls[0] as [{ listing: unknown }, unknown])[0].listing
+
+    it('uses the series listing when Listing is empty, null or omitted', async () => {
+      for (const listingValue of [undefined, null, '', '   ']) {
+        mocks.callKronosForecast.mockClear()
+
+        const response = await POST(buildRequest(buildBlockPayload({ listing: listingValue })))
+
+        expect(response.status).toBe(200)
+        expect(forwardedListing()).toEqual({ listingId: 'AAPL', listingType: 'default' })
+      }
+    })
+
+    it('forecasts an IBKR listing supplied by identity from the series', async () => {
+      const ibkrListing = {
+        listing_id: 'MESZ26',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default',
+        manual: { assetClass: 'future', marketCode: 'CME' },
+      }
+
+      const response = await POST(
+        buildRequest(
+          buildBlockPayload({
+            listing: undefined,
+            marketSeries: { ...buildMarketSeries(40), listing: ibkrListing },
+          })
+        )
+      )
+
+      expect(response.status).toBe(200)
+      expect(forwardedListing()).toEqual({ listingId: 'MESZ26', listingType: 'default' })
+    })
+
+    it('keeps an explicit listing over the one in the series', async () => {
+      const response = await POST(
+        buildRequest(buildBlockPayload({ listing: { ...listing, listing_id: 'MSFT' } }))
+      )
+
+      expect(response.status).toBe(200)
+      expect(forwardedListing()).toEqual({ listingId: 'MSFT', listingType: 'default' })
+    })
+
+    it('rejects a forecast with no listing anywhere with 400', async () => {
+      const { listing: _listing, ...seriesWithoutListing } = buildMarketSeries(40)
+
+      const response = await POST(
+        buildRequest(buildBlockPayload({ listing: '', marketSeries: seriesWithoutListing }))
+      )
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: KRONOS_MISSING_LISTING_MESSAGE })
+      expect(mocks.callKronosForecast).not.toHaveBeenCalled()
+    })
+
+    it('declares listing optional on the tool', () => {
+      expect(kronosForecastTool.params.listing.required).toBe(false)
+    })
   })
 
   it('accepts the exact body produced by the kronos_forecast tool', async () => {
