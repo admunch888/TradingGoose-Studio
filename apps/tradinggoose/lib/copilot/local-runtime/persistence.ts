@@ -1,7 +1,25 @@
 import { copilotReviewItems, db } from '@tradinggoose/db'
-import { and, asc, desc, eq, like, notLike } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, like, lt, notLike } from 'drizzle-orm'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
 import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-messages'
+import {
+  decodeLocalWorkingValue,
+  encodeLocalWorkingValue,
+  LOCAL_ASSISTANT_ITEM_PREFIX,
+  LOCAL_USER_ITEM_PREFIX,
+  LOCAL_WORKING_PREFIX,
+  LOCAL_WORKING_SEQUENCE_BASE,
+  TOOL_RESULT_ITEM_PREFIX,
+} from '@/lib/copilot/local-runtime/working-rows'
+import { createLogger } from '@/lib/logs/console/logger'
+
+export {
+  isLocalWorkingContent,
+  isLocalWorkingItem,
+  isLocalWorkingItemId,
+} from '@/lib/copilot/local-runtime/working-rows'
+
+const logger = createLogger('LocalCopilotPersistence')
 
 /**
  * Persistence for the local Copilot runtime's model working history.
@@ -9,53 +27,74 @@ import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-me
  * Rows live in the existing Copilot review tables so no schema migration is
  * needed:
  * - the assistant `tool_calls` message is stored as a `function_call` review
- *   item (`content` holds the call JSON), preserving transcript fidelity;
+ *   item (`content` holds the calls and the step's text);
  * - each tool result is stored as a synthetic `tool_result` review item whose
  *   content is namespaced with `LOCAL_WORKING_PREFIX` and filtered out of the
  *   user-visible transcript and of the model's own conversation history.
+ *
+ * Working rows are numbered from `LOCAL_WORKING_SEQUENCE_BASE` (working-rows.ts),
+ * apart from the transcript.
  */
-const LOCAL_WORKING_PREFIX = '[[local-working]]'
-const TOOL_RESULT_ITEM_PREFIX = 'local_tool_result_'
-const LOCAL_USER_ITEM_PREFIX = 'local_user_'
-const LOCAL_ASSISTANT_ITEM_PREFIX = 'local_working_assistant_'
 const FUNCTION_CALL_KIND = 'function_call'
+const MAX_WORKING_INSERT_ATTEMPTS = 5
 
 type WorkingRow = { itemId: string; content: string }
-
-function encodeWorkingValue(value: unknown): string {
-  return `${LOCAL_WORKING_PREFIX}${JSON.stringify(value)}`
+type WorkingRowValues = Omit<typeof copilotReviewItems.$inferInsert, 'sessionId' | 'sequence'> & {
+  itemId: string
 }
 
-function decodeWorkingValue(content: string): unknown | null {
-  if (!content?.startsWith(LOCAL_WORKING_PREFIX)) return null
-  try {
-    return JSON.parse(content.slice(LOCAL_WORKING_PREFIX.length))
-  } catch {
-    return null
-  }
-}
-
-export function isLocalWorkingContent(content: string | null | undefined): boolean {
-  return typeof content === 'string' && content.startsWith(LOCAL_WORKING_PREFIX)
-}
-
-export function isLocalWorkingItemId(itemId: string | null | undefined): boolean {
-  if (typeof itemId !== 'string') return false
-  return (
-    itemId.startsWith(TOOL_RESULT_ITEM_PREFIX) ||
-    itemId.startsWith(LOCAL_USER_ITEM_PREFIX) ||
-    itemId.startsWith(LOCAL_ASSISTANT_ITEM_PREFIX)
-  )
-}
 /**
- * Review items synthesised for the local working state. These must be excluded
- * from the transcript handed to the model and from the user-visible thread.
+ * Appends one working row after the session's last working row.
+ *
+ * A write that lost its sequence to a concurrent one used to vanish
+ * (`onConflictDoNothing`), silently dropping a user request or a tool call from
+ * the history. The sequence is now re-read and the write retried; a conflict on
+ * the item id is an already-saved row and ends the write.
  */
-export function isLocalWorkingItem(row: {
-  itemId?: string | null
-  content?: string | null
-}): boolean {
-  return isLocalWorkingItemId(row.itemId) || isLocalWorkingContent(row.content)
+async function insertLocalWorkingRow(
+  reviewSessionId: string,
+  values: WorkingRowValues
+): Promise<void> {
+  for (let attempt = 0; attempt < MAX_WORKING_INSERT_ATTEMPTS; attempt++) {
+    const [lastRow] = await db
+      .select({ sequence: copilotReviewItems.sequence })
+      .from(copilotReviewItems)
+      .where(
+        and(
+          eq(copilotReviewItems.sessionId, reviewSessionId),
+          gte(copilotReviewItems.sequence, LOCAL_WORKING_SEQUENCE_BASE)
+        )
+      )
+      .orderBy(desc(copilotReviewItems.sequence))
+      .limit(1)
+
+    const sequence =
+      typeof lastRow?.sequence === 'number' ? lastRow.sequence + 1 : LOCAL_WORKING_SEQUENCE_BASE
+
+    const inserted = await db
+      .insert(copilotReviewItems)
+      .values({ ...values, sessionId: reviewSessionId, sequence })
+      .onConflictDoNothing()
+      .returning({ id: copilotReviewItems.id })
+    if (inserted.length > 0) return
+
+    const [existing] = await db
+      .select({ id: copilotReviewItems.id })
+      .from(copilotReviewItems)
+      .where(
+        and(
+          eq(copilotReviewItems.sessionId, reviewSessionId),
+          eq(copilotReviewItems.itemId, values.itemId)
+        )
+      )
+      .limit(1)
+    if (existing) return
+  }
+
+  logger.warn('Local copilot working history row was not saved', {
+    reviewSessionId,
+    itemId: values.itemId,
+  })
 }
 
 /** Persists a single working message (assistant tool_calls or tool result). */
@@ -64,45 +103,33 @@ export async function persistLocalWorkingMessage(params: {
   message: LocalWorkingMessage
 }): Promise<void> {
   const { reviewSessionId, message } = params
-
-  const [lastRow] = await db
-    .select({ sequence: copilotReviewItems.sequence })
-    .from(copilotReviewItems)
-    .where(eq(copilotReviewItems.sessionId, reviewSessionId))
-    .orderBy(desc(copilotReviewItems.sequence))
-    .limit(1)
-
-  const nextSequence =
-    typeof lastRow?.sequence === 'number' ? lastRow.sequence + 1 : Date.now() % 1_000_000_000
-
   const isToolMessage = typeof message.tool_call_id === 'string' && !!message.tool_call_id
-  const timestamp = new Date().toISOString()
 
-  await db
-    .insert(copilotReviewItems)
-    .values({
-      sessionId: reviewSessionId,
-      turnId: null,
-      sequence: nextSequence,
-      itemId: isToolMessage
-        ? `${TOOL_RESULT_ITEM_PREFIX}${message.tool_call_id}`
-        : `local_tool_calls_${crypto.randomUUID()}`,
-      kind: isToolMessage ? 'tool_result' : FUNCTION_CALL_KIND,
-      messageRole: isToolMessage ? 'tool' : 'assistant',
-      content: isToolMessage
-        ? encodeWorkingValue({
-            content: message.content ?? '',
-            toolCallId: message.tool_call_id,
-            ...(message.name ? { name: message.name } : {}),
-          })
-        : encodeWorkingValue({ tool_calls: message.tool_calls ?? [] }),
-      timestamp,
-      contentBlocks: [],
-      contexts: [],
-      fileAttachments: [],
-      citations: [],
-    })
-    .onConflictDoNothing()
+  await insertLocalWorkingRow(reviewSessionId, {
+    turnId: null,
+    itemId: isToolMessage
+      ? `${TOOL_RESULT_ITEM_PREFIX}${message.tool_call_id}`
+      : `local_tool_calls_${crypto.randomUUID()}`,
+    kind: isToolMessage ? 'tool_result' : FUNCTION_CALL_KIND,
+    messageRole: isToolMessage ? 'tool' : 'assistant',
+    content: isToolMessage
+      ? encodeLocalWorkingValue({
+          content: message.content ?? '',
+          toolCallId: message.tool_call_id,
+          ...(message.name ? { name: message.name } : {}),
+        })
+      : // The step's text travels with its calls, so it is replayed in place
+        // rather than saved as a separate reply between the call and its result.
+        encodeLocalWorkingValue({
+          tool_calls: message.tool_calls ?? [],
+          ...(message.content ? { content: message.content } : {}),
+        }),
+    timestamp: new Date().toISOString(),
+    contentBlocks: [],
+    contexts: [],
+    fileAttachments: [],
+    citations: [],
+  })
 }
 
 /**
@@ -129,14 +156,14 @@ export async function loadLocalWorkingMessages(
 
   const messages: LocalWorkingMessage[] = []
   for (const row of rows as WorkingRow[]) {
-    const decoded = decodeWorkingValue(row.content)
+    const decoded = decodeLocalWorkingValue(row.content)
     if (!decoded || typeof decoded !== 'object') continue
     const record = decoded as Record<string, unknown>
 
     if (Array.isArray(record.tool_calls)) {
       messages.push({
         role: 'assistant',
-        content: null,
+        content: typeof record.content === 'string' ? record.content : null,
         tool_calls: record.tool_calls as LocalWorkingMessage['tool_calls'],
       })
       continue
@@ -155,7 +182,10 @@ export async function loadLocalWorkingMessages(
     // Plain user/assistant text turns, written by persistLocalWorkingUserMessage
     // and persistLocalWorkingAssistantMessage. Without these the model would
     // only ever see the current turn.
-    if (typeof record.text === 'string' && (record.role === 'user' || record.role === 'assistant')) {
+    if (
+      typeof record.text === 'string' &&
+      (record.role === 'user' || record.role === 'assistant')
+    ) {
       messages.push({ role: record.role, content: record.text })
     }
   }
@@ -179,8 +209,8 @@ export async function persistLocalWorkingUserMessage(params: {
 }
 
 /**
- * Records the assistant's reply text in the working history. Called once per
- * completed turn; tool-call iterations are recorded separately.
+ * Records the assistant's final reply text in the working history. Called once
+ * per completed turn; tool-call steps carry their own text.
  */
 export async function persistLocalWorkingAssistantMessage(params: {
   reviewSessionId: string
@@ -188,11 +218,10 @@ export async function persistLocalWorkingAssistantMessage(params: {
   text: string
 }): Promise<void> {
   if (!params.text.trim()) return
-  await appendWorkingRow(
-    params.reviewSessionId,
-    `${LOCAL_ASSISTANT_ITEM_PREFIX}${params.itemId}`,
-    { text: params.text, role: 'assistant' }
-  )
+  await appendWorkingRow(params.reviewSessionId, `${LOCAL_ASSISTANT_ITEM_PREFIX}${params.itemId}`, {
+    text: params.text,
+    role: 'assistant',
+  })
 }
 
 /** Inserts one namespaced working-history row at the end of the session. */
@@ -201,33 +230,18 @@ async function appendWorkingRow(
   itemId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  const [lastRow] = await db
-    .select({ sequence: copilotReviewItems.sequence })
-    .from(copilotReviewItems)
-    .where(eq(copilotReviewItems.sessionId, reviewSessionId))
-    .orderBy(desc(copilotReviewItems.sequence))
-    .limit(1)
-
-  const nextSequence =
-    typeof lastRow?.sequence === 'number' ? lastRow.sequence + 1 : Date.now() % 1_000_000_000
-
-  await db
-    .insert(copilotReviewItems)
-    .values({
-      sessionId: reviewSessionId,
-      turnId: null,
-      sequence: nextSequence,
-      itemId,
-      kind: 'message',
-      messageRole: typeof payload.role === 'string' ? payload.role : 'assistant',
-      content: encodeWorkingValue(payload),
-      timestamp: new Date().toISOString(),
-      contentBlocks: [],
-      contexts: [],
-      fileAttachments: [],
-      citations: [],
-    })
-    .onConflictDoNothing()
+  await insertLocalWorkingRow(reviewSessionId, {
+    turnId: null,
+    itemId,
+    kind: 'message',
+    messageRole: typeof payload.role === 'string' ? payload.role : 'assistant',
+    content: encodeLocalWorkingValue(payload),
+    timestamp: new Date().toISOString(),
+    contentBlocks: [],
+    contexts: [],
+    fileAttachments: [],
+    citations: [],
+  })
 }
 
 /**
@@ -326,15 +340,20 @@ export async function persistLocalReviewMessage(params: {
     return
   }
 
+  // Transcript items stay below the working rows' range.
   const [lastRow] = await db
     .select({ sequence: copilotReviewItems.sequence })
     .from(copilotReviewItems)
-    .where(eq(copilotReviewItems.sessionId, params.reviewSessionId))
+    .where(
+      and(
+        eq(copilotReviewItems.sessionId, params.reviewSessionId),
+        lt(copilotReviewItems.sequence, LOCAL_WORKING_SEQUENCE_BASE)
+      )
+    )
     .orderBy(desc(copilotReviewItems.sequence))
     .limit(1)
 
-  const nextSequence =
-    typeof lastRow?.sequence === 'number' ? lastRow.sequence + 1 : Date.now() % 1_000_000_000
+  const nextSequence = typeof lastRow?.sequence === 'number' ? lastRow.sequence + 1 : 0
 
   await db.insert(copilotReviewItems).values({
     sessionId: params.reviewSessionId,

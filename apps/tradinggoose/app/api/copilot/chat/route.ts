@@ -22,8 +22,11 @@ import { mirrorLocalCopilotCompletionUsageReports } from '@/lib/copilot/completi
 import { MAX_COPILOT_CONTEXTS_PER_TURN } from '@/lib/copilot/context-limits'
 import { normalizeFunctionCallArguments } from '@/lib/copilot/function-call-args'
 import { handleLocalCopilotChat } from '@/lib/copilot/local-runtime/chat-handler'
-import { isLocalWorkingItem } from '@/lib/copilot/local-runtime/persistence'
 import { isCopilotLocalRuntimeModel as isLocalCopilotModel } from '@/lib/copilot/local-runtime/runtime-models'
+import {
+  isLocalWorkingItem,
+  rebaseLocalWorkingRows,
+} from '@/lib/copilot/local-runtime/working-rows'
 import {
   mapSessionToApiResponse,
   SESSION_SELECT_COLUMNS,
@@ -160,7 +163,10 @@ async function persistChatMessages(
         )
       )
       .orderBy(asc(copilotReviewItems.sequence))
-    const currentMessages = currentItems.map(mapReviewItemToApi)
+    // The local Copilot's working rows are not transcript messages.
+    const currentMessages = currentItems
+      .filter((item) => !isLocalWorkingItem(item))
+      .map(mapReviewItemToApi)
     const hasPersistedUserMessage = currentMessages.some(
       (message) => getPersistedReviewMessageId(message) === params.userMessageId
     )
@@ -207,6 +213,18 @@ async function persistChatMessages(
         params.latestTurnStatus ?? 'completed'
       )
 
+      // The local Copilot's working history shares this table; replacing the
+      // transcript must not delete it (see rebaseLocalWorkingRows).
+      const localWorkingRows = rebaseLocalWorkingRows(
+        (
+          await tx
+            .select()
+            .from(copilotReviewItems)
+            .where(eq(copilotReviewItems.sessionId, params.reviewSessionId))
+            .orderBy(asc(copilotReviewItems.sequence))
+        ).filter(isLocalWorkingItem)
+      )
+
       await tx
         .delete(copilotReviewItems)
         .where(eq(copilotReviewItems.sessionId, params.reviewSessionId))
@@ -220,6 +238,10 @@ async function persistChatMessages(
 
       if (nextHistory.items.length > 0) {
         await tx.insert(copilotReviewItems).values(nextHistory.items)
+      }
+
+      if (localWorkingRows.length > 0) {
+        await tx.insert(copilotReviewItems).values(localWorkingRows)
       }
 
       await tx

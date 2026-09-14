@@ -290,6 +290,92 @@ describe('Copilot Chat Update Messages', () => {
     ])
   })
 
+  it('keeps the local Copilot working history when it rewrites the transcript', async () => {
+    mockLoadReviewSessionForUser.mockResolvedValue({
+      id: 'review-session-1',
+      userId: 'collaborator-user',
+      entityKind: 'copilot',
+      entityId: null,
+      workspaceId: 'workspace-1',
+    })
+    const transcriptRow = {
+      itemId: 'message-1',
+      sessionId: 'review-session-1',
+      messageRole: 'user',
+      content: 'Build the MES workflow',
+      timestamp: '2026-03-30T12:00:00.000Z',
+    }
+    const workingUserRow = {
+      id: 'row-user',
+      itemId: 'local_user_message-1',
+      sessionId: 'review-session-1',
+      turnId: null,
+      sequence: 5,
+      kind: 'message',
+      messageRole: 'user',
+      content: '[[local-working]]{"text":"Build the MES workflow","role":"user"}',
+      timestamp: '2026-03-30T12:00:00.000Z',
+    }
+    const workingCallRow = {
+      id: 'row-calls',
+      itemId: 'local_tool_calls_1',
+      sessionId: 'review-session-1',
+      turnId: null,
+      sequence: 7,
+      kind: 'function_call',
+      messageRole: 'assistant',
+      content: '[[local-working]]{"tool_calls":[]}',
+      timestamp: '2026-03-30T12:00:01.000Z',
+    }
+    // The transcript read (message rows, including the working user row), then
+    // the read of every row the rewrite replaces.
+    selectOrderBy
+      .mockResolvedValueOnce([transcriptRow, workingUserRow])
+      .mockResolvedValueOnce([transcriptRow, workingUserRow, workingCallRow])
+
+    const request = createMockRequest('POST', {
+      reviewSessionId: 'review-session-1',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Build the MES workflow',
+          timestamp: '2026-03-30T12:00:00.000Z',
+        },
+        {
+          id: 'message-2',
+          role: 'assistant',
+          content: 'Planning the workflow',
+          timestamp: '2026-03-30T12:00:01.000Z',
+        },
+      ],
+    })
+
+    const { POST } = await import('@/app/api/copilot/chat/update-messages/route')
+    const response = await POST(request)
+
+    expect(response.status).toBe(200)
+    expect(deleteWhere).toHaveBeenCalledTimes(2)
+    expect(insertValues).toHaveBeenCalledTimes(3)
+    // The transcript holds only the conversation, not the working user row.
+    expect(insertValues.mock.calls[1]?.[0]).toEqual([
+      expect.objectContaining({ itemId: 'message-1' }),
+      expect.objectContaining({ itemId: 'message-2' }),
+    ])
+    expect(insertValues.mock.calls[2]?.[0]).toEqual([
+      expect.objectContaining({
+        itemId: 'local_user_message-1',
+        sequence: 1_000_000_000,
+        turnId: null,
+      }),
+      expect.objectContaining({
+        itemId: 'local_tool_calls_1',
+        sequence: 1_000_000_001,
+        turnId: null,
+      }),
+    ])
+  })
+
   it('uses exact rewrite mode for edit replay truncation', async () => {
     mockLoadReviewSessionForUser.mockResolvedValue({
       id: 'review-session-1',

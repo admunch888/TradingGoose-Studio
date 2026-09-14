@@ -104,6 +104,28 @@ describe('repairToolCallPairs', () => {
     ])
   })
 
+  it('moves a result back next to its call when reply text was saved between them', () => {
+    // A turn that stopped for plan saved its text after the call; the browser's
+    // result landed after that text, and the model server refused the request.
+    const text: LocalWorkingMessage = { role: 'assistant', content: 'Planning the workflow' }
+    const history = [user('build it'), calls('plan_1'), text, result('plan_1')]
+
+    expect(repairToolCallPairs(history)).toEqual([
+      user('build it'),
+      calls('plan_1'),
+      result('plan_1'),
+      text,
+    ])
+  })
+
+  it('pairs repeated call ids with the result that follows each call', () => {
+    const first: LocalWorkingMessage = { role: 'tool', tool_call_id: 'call_0', content: 'first' }
+    const second: LocalWorkingMessage = { role: 'tool', tool_call_id: 'call_0', content: 'second' }
+    const history = [user('go'), calls('call_0'), first, calls('call_0'), second]
+
+    expect(repairToolCallPairs(history)).toEqual(history)
+  })
+
   it('leaves a well-formed history untouched and repairs before trimming', () => {
     const history = [user('go'), calls('blocks_1'), result('blocks_1')]
 

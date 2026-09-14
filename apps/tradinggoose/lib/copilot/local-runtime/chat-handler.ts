@@ -1,6 +1,6 @@
 import { copilotReviewSessions, db } from '@tradinggoose/db'
 import { eq } from 'drizzle-orm'
-import { runLocalCopilotTurn } from '@/lib/copilot/local-runtime/agent'
+import { type LocalAgentRunResult, runLocalCopilotTurn } from '@/lib/copilot/local-runtime/agent'
 import { describeModelServerError } from '@/lib/copilot/local-runtime/model-server-error'
 import { persistLocalWorkingMessage } from '@/lib/copilot/local-runtime/persistence'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
@@ -92,6 +92,19 @@ function parseAssistantText(messages: LocalWorkingMessage[]): string {
     .filter((message) => message.role === 'assistant' && typeof message.content === 'string')
     .map((message) => message.content as string)
     .join('')
+}
+
+/**
+ * The reply the working history keeps for a turn: its final text-only message,
+ * and nothing when the turn stopped for a browser tool. A step's text is saved
+ * with its tool calls; saving the turn's text again as a reply put it between
+ * the call and the result the browser sends back, and the resumed request was
+ * refused.
+ */
+export function getWorkingReplyText(result: LocalAgentRunResult): string {
+  if (result.awaiting) return ''
+  const last = result.workingMessages.at(-1)
+  return last?.role === 'assistant' && !last.tool_calls?.length ? (last.content ?? '') : ''
 }
 
 /**
@@ -238,11 +251,14 @@ export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Pr
 
         // Mirror the assistant reply into the working history so the next turn
         // replays both sides of the exchange.
-        await persistLocalWorkingAssistantMessage({
-          reviewSessionId: params.reviewSessionId,
-          itemId: assistantMessageId,
-          text: result.text,
-        })
+        const workingReplyText = getWorkingReplyText(result)
+        if (workingReplyText.trim()) {
+          await persistLocalWorkingAssistantMessage({
+            reviewSessionId: params.reviewSessionId,
+            itemId: assistantMessageId,
+            text: workingReplyText,
+          })
+        }
 
         send('stream_end', {})
       } catch (error) {
@@ -358,7 +374,11 @@ export async function handleLocalCopilotContinuation(
           send('response.completed', {})
         }
 
-        await persistLocalContinuationText(params.reviewSessionId, result.text)
+        await persistLocalContinuationText(
+          params.reviewSessionId,
+          result.text,
+          getWorkingReplyText(result)
+        )
 
         send('stream_end', {})
       } catch (error) {
@@ -382,19 +402,27 @@ export async function handleLocalCopilotContinuation(
 
 /**
  * Appends streamed assistant text to the turn's assistant transcript item, and
- * mirrors it into the working history so the next turn replays it.
+ * saves the continuation's final reply to the working history so the next turn
+ * replays it.
  */
-async function persistLocalContinuationText(reviewSessionId: string, text: string) {
-  if (!text.trim()) return
+async function persistLocalContinuationText(
+  reviewSessionId: string,
+  text: string,
+  workingReplyText: string
+) {
   const { appendLocalAssistantText, persistLocalWorkingAssistantMessage } = await import(
     '@/lib/copilot/local-runtime/persistence'
   )
-  await appendLocalAssistantText(reviewSessionId, text)
-  await persistLocalWorkingAssistantMessage({
-    reviewSessionId,
-    itemId: `continuation_${crypto.randomUUID()}`,
-    text,
-  })
+  if (text.trim()) {
+    await appendLocalAssistantText(reviewSessionId, text)
+  }
+  if (workingReplyText.trim()) {
+    await persistLocalWorkingAssistantMessage({
+      reviewSessionId,
+      itemId: `continuation_${crypto.randomUUID()}`,
+      text: workingReplyText,
+    })
+  }
 }
 
 async function loadLocalWorkingHistory(
