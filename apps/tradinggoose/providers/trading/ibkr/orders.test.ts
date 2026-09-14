@@ -378,6 +378,53 @@ describe('prepareIbkrOrderRequest', () => {
     expect(ticketOf(request)).toMatchObject({ conid: 495492863, secType: 'FUT' })
     expect(fetchBrokerJson).toHaveBeenCalledTimes(2)
   })
+
+  it('takes the asset class from the listing when the order request carries none', async () => {
+    // The quick order widget: the order pipeline passes the IBKR-search listing
+    // (`future` on the listing only), not an `assetClass` on the request. Reading
+    // the request alone searched MESZ26 as a stock and failed with "Unable to
+    // resolve IBKR contract identifier for symbol MESZ26".
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    const searchedSecTypes: string[] = []
+    vi.mocked(fetchBrokerJson).mockImplementation(
+      async ({ url }: { url: string }): Promise<never> => {
+        if (url.includes('/iserver/secdef/info')) {
+          return [{ conid: '815824257', symbol: 'MES', secType: 'FUT', exchange: 'CME' }] as never
+        }
+        searchedSecTypes.push(new URL(url).searchParams.get('secType') ?? 'STK')
+        return [
+          {
+            conid: '362702',
+            symbol: 'MES',
+            description: 'CME',
+            sections: [{ secType: 'FUT', exchange: 'CME', months: 'SEP26;DEC26;MAR27' }],
+          },
+        ] as never
+      }
+    )
+    const params = {
+      ...baseParams,
+      listing: {
+        listingIdentity: {
+          listing_id: 'MESZ26',
+          base_id: '',
+          quote_id: '',
+          listing_type: 'default' as const,
+          manual: { assetClass: 'future' as const, marketCode: 'CME' },
+        },
+        base: 'MESZ26',
+        name: 'Micro E-Mini S&P 500 Stock Price Index December 2026',
+        assetClass: 'future',
+        marketCode: 'CME',
+      },
+    }
+
+    await prepareIbkrOrderRequest(params)
+    const request = buildIbkrOrderRequest(params)
+
+    expect(searchedSecTypes).toEqual(['FUT'])
+    expect(ticketOf(request)).toMatchObject({ conid: 815824257, secType: 'FUT', quantity: 10 })
+  })
 })
 
 describe('submitIbkrOrder', () => {

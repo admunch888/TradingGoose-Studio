@@ -15,7 +15,10 @@ import type {
   TradingOrderInput,
   TradingRequestConfig,
 } from '@/providers/trading/types'
-import { listingIdentityToTradingSymbol } from '@/providers/trading/utils'
+import {
+  listingIdentityToTradingSymbol,
+  resolveTradingListingAssetClass,
+} from '@/providers/trading/utils'
 
 const logger = createLogger('IBKR:Orders')
 
@@ -55,6 +58,17 @@ export const IBKR_DEFAULT_CONFIRM_MESSAGE_IDS = ['o10151', 'o10152', 'o10288', '
 const MAX_ORDER_REPLY_ROUNDS = 10
 
 /**
+ * The asset class an IBKR order's contract is looked up with. The order pipeline
+ * hands adapters the resolved listing but does not copy its asset class onto the
+ * request, so reading `params.assetClass` alone looked every contract up as a
+ * stock (secType STK): stocks still worked, and an MESZ26 futures order failed
+ * with "Unable to resolve IBKR contract identifier" while its chart resolved the
+ * same contract. The explicit value wins; otherwise the listing's own.
+ */
+export const resolveIbkrOrderAssetClass = (params: TradingOrderInput) =>
+  resolveTradingListingAssetClass(params.listing, params.assetClass)
+
+/**
  * The symbol an IBKR order is submitted for, derived exactly as
  * buildIbkrOrderRequest derives it. prepareIbkrOrderRequest has to derive it
  * the same way: the cache entry it seeds is only useful if the synchronous read
@@ -65,7 +79,7 @@ export const resolveIbkrOrderSymbol = (params: TradingOrderInput): string =>
     listing: params.listing,
     base: params.base,
     quote: params.quote,
-    assetClass: params.assetClass,
+    assetClass: resolveIbkrOrderAssetClass(params),
     marketCode: params.marketCode,
     countryCode: params.countryCode,
     cityName: params.cityName,
@@ -110,7 +124,7 @@ export const prepareIbkrOrderRequest = async (params: TradingOrderInput): Promis
   await ensureIbkrSession({ accessToken: params.accessToken })
   await resolveIbkrConidFromApi({
     symbol: resolveIbkrOrderSymbol(params),
-    assetClass: params.assetClass,
+    assetClass: resolveIbkrOrderAssetClass(params),
     context: resolveIbkrOrderListingContext(params),
     accessToken: params.accessToken,
   })
@@ -144,7 +158,7 @@ export const buildIbkrOrderRequest = (params: TradingOrderInput): TradingRequest
 
   const { conid, conidSpec } = resolveIbkrConid({
     symbol,
-    assetClass: params.assetClass,
+    assetClass: resolveIbkrOrderAssetClass(params),
     context: resolveIbkrOrderListingContext(params),
   })
 
