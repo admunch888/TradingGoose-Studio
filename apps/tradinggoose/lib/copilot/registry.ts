@@ -455,6 +455,16 @@ export const ToolArgSchemas = {
   search_listing: z
     .object({
       query: z.string().trim().min(1),
+      provider: z
+        .enum(['ibkr'])
+        .optional()
+        .describe(
+          'Set to `ibkr` to search the IBKR gateway directly - use it for IBKR data/trading and for futures contract months such as MES.'
+        ),
+      assetClass: z
+        .enum(['stock', 'etf', 'indice', 'future'])
+        .optional()
+        .describe('Narrows an IBKR search, e.g. `future` for MES or ES contract months.'),
     })
     .strict(),
 

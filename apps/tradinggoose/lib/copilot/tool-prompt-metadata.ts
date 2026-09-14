@@ -113,7 +113,7 @@ export const TOOL_PROMPT_METADATA: Record<ToolId, ToolPromptMetadata> = {
   },
   search_listing: {
     description:
-      "Search companies, tickers, crypto pairs, and currencies. Each result is a resolved listing with display details and a strict canonical `listingIdentity` object for Copilot to use in listing inputs. Takes only `query`; in watchlist listing items, put the selected result's `listingIdentity` value under the `listing` key.",
+      'Search companies, tickers, futures, crypto pairs, and currencies. Each result is a resolved listing with display details and a strict canonical `listingIdentity` object for Copilot to use in listing inputs. Takes `query`, plus optional `provider: "ibkr"` (search the IBKR gateway - use it for IBKR data and trading and for futures contract months like MES) and `assetClass` (`stock`, `etf`, `indice`, `future`). Without `provider` it searches the listing catalogue and falls back to IBKR. If it fails, do not retry the same query; build a manual listing identity as the error hint shows. In watchlist listing items, put the selected result\'s `listingIdentity` value under the `listing` key.',
     kind: 'search',
     entityKind: 'listing',
   },
