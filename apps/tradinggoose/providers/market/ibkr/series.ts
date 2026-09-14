@@ -163,12 +163,15 @@ export async function fetchIbkrSeries(request: MarketSeriesRequest): Promise<Mar
     throw new Error(`IBKR market data error for ${symbol}: ${response.error}`)
   }
 
-  // IBKR scales prices for some contracts; dividing is required for
-  // correctness and its absence is silent rather than an error.
-  const priceFactor =
-    typeof response?.priceFactor === 'number' && response.priceFactor > 0 ? response.priceFactor : 1
-  const scale = (value?: number): number | undefined =>
-    typeof value === 'number' && Number.isFinite(value) ? value / priceFactor : undefined
+  // Bar prices are already real prices. `priceFactor` is, in IBKR's own words,
+  // "Internal use. Used to scale Client Portal chart Y-axis": it applies only to
+  // the envelope's encoded `high`/`low` strings. IBKR's documented AAPL response
+  // carries `priceFactor: 100` next to bars closing at 212.33 (with `high`
+  // "21394/..." = 213.94 x 100). Dividing the bars by it charted AAPL at 2.12
+  // while the live snapshot quoted 212, which broke the price scale and fed
+  // Kronos prices a hundred times too small.
+  const price = (value?: number): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined
 
   const bars: MarketBar[] = (response?.data ?? [])
     .filter((entry): entry is IbkrHistoryBar => Boolean(entry) && typeof entry === 'object')
@@ -177,10 +180,10 @@ export async function fetchIbkrSeries(request: MarketSeriesRequest): Promise<Mar
     .filter((entry) => typeof entry.c === 'number' && Number.isFinite(entry.c))
     .map((entry) => ({
       timeStamp: toIsoString(toMillis(entry.t)) ?? new Date().toISOString(),
-      open: scale(entry.o),
-      high: scale(entry.h),
-      low: scale(entry.l),
-      close: scale(entry.c) as number,
+      open: price(entry.o),
+      high: price(entry.h),
+      low: price(entry.l),
+      close: entry.c as number,
       volume: typeof entry.v === 'number' ? entry.v : undefined,
     }))
     .sort((a, b) => Date.parse(a.timeStamp) - Date.parse(b.timeStamp))
