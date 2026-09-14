@@ -596,6 +596,91 @@ describe('PortfolioSnapshotWidgetBody', () => {
     expect(container.textContent).toContain('Quote Value')
   })
 
+  it('lists each position like the broker, with the live quote as last price', async () => {
+    const mesPosition = {
+      listingIdentity: {
+        listing_id: 'MESZ26',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default' as const,
+        manual: { assetClass: 'future' as const, marketCode: 'CME' },
+      },
+      quantity: 2,
+      averagePrice: 7705.37,
+      marketPrice: 7699.5,
+      marketValue: 76995,
+      unrealizedPnl: -51,
+      unrealizedPnlPercent: -0.07,
+      multiplier: 5,
+    }
+    mockUsePortfolioDetail.mockReturnValue(
+      createQueryResult({
+        data: createPortfolioDetail({ positions: [mesPosition] }),
+      })
+    )
+    mockUseMarketQuoteSnapshots.mockImplementation(({ items }: { items: Array<{ key: string }> }) =>
+      createQueryResult({
+        data: Object.fromEntries(
+          items.map((item) => [
+            item.key,
+            { lastPrice: 7699.25, previousClose: 7727, change: -27.75, changePercent: -0.36 },
+          ])
+        ),
+      })
+    )
+
+    await act(async () => {
+      root.render(
+        <PortfolioSnapshotWidgetBody
+          channelId='portfolio-snapshot-panel-1'
+          context={{ workspaceId: 'workspace-1' }}
+          widget={{ key: 'portfolio_snapshot' } as any}
+          panelId='panel-1'
+          onWidgetParamsPatch={mockOnWidgetParamsPatch}
+          params={{
+            provider: 'alpaca',
+            portfolioIdentity: selectedPortfolioIdentity,
+            selectedWindow: '1D',
+            marketProvider: 'alpaca',
+          }}
+        />
+      )
+    })
+
+    const row = container.querySelector('tbody tr')
+    expect(row?.querySelector('th')?.textContent).toBe('MESZ26')
+    const cells = Array.from(row?.querySelectorAll('td') ?? []).map((cell) => cell.textContent)
+    expect(cells).toEqual(['2', '$7,705.37', '$7,699.25', '-$27.75', '$76,995.00', '-$51.00-0.07%'])
+  })
+
+  it('says when the account holds no positions', async () => {
+    mockUsePortfolioDetail.mockReturnValue(
+      createQueryResult({
+        data: createPortfolioDetail({ positions: [] }),
+      })
+    )
+
+    await act(async () => {
+      root.render(
+        <PortfolioSnapshotWidgetBody
+          channelId='portfolio-snapshot-panel-1'
+          context={{ workspaceId: 'workspace-1' }}
+          widget={{ key: 'portfolio_snapshot' } as any}
+          panelId='panel-1'
+          onWidgetParamsPatch={mockOnWidgetParamsPatch}
+          params={{
+            provider: 'alpaca',
+            portfolioIdentity: selectedPortfolioIdentity,
+            selectedWindow: '1D',
+          }}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('No open positions')
+    expect(container.querySelector('table')).toBeNull()
+  })
+
   it('renders the explicit performance unavailable state', async () => {
     mockUsePortfolioPerformance.mockReturnValue(
       createQueryResult({

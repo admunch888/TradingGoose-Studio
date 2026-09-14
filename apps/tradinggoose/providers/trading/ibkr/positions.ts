@@ -149,6 +149,12 @@ export const normalizeIbkrPositions = (
     const marketValue = toFiniteNumber(position?.mktValue)
     const unrealizedPnlPercent = toFiniteNumber(position?.unrealizedPnlPercent)
     const multiplier = toFiniteNumber(position?.multiplier) ?? 1
+    // `avgCost` is per contract (price × multiplier) for futures; `avgPrice` is
+    // the per-unit price TWS shows as Avg Price.
+    const avgCost = toFiniteNumber(position?.avgCost)
+    const averagePrice =
+      toFiniteNumber(position?.avgPrice) ??
+      (typeof avgCost === 'number' && multiplier > 0 ? avgCost / multiplier : undefined)
 
     return [
       {
@@ -158,7 +164,7 @@ export const normalizeIbkrPositions = (
           null,
         quantity,
         side,
-        averagePrice: toFiniteNumber(position?.avgCost),
+        averagePrice,
         marketPrice: toFiniteNumber(position?.mktPrice),
         marketValue,
         currencySymbol: quote === IBKR_DEFAULT_BASE_CURRENCY ? '$' : undefined,
@@ -175,6 +181,16 @@ export const normalizeIbkrPositions = (
 
 export const sumIbkrPositionUnrealizedPnl = (positions: UnifiedTradingPosition[]) =>
   sumFiniteNumbers(positions.map((position) => position.unrealizedPnl))
+
+/**
+ * Market value of the held positions, or null when no position reports one.
+ * Futures carry no loan value, so net liquidation minus cash is only their
+ * variation margin (a few dollars) rather than what the positions are worth.
+ */
+export const sumIbkrPositionMarketValue = (positions: UnifiedTradingPosition[]): number | null =>
+  positions.some((position) => typeof position.marketValue === 'number')
+    ? sumFiniteNumbers(positions.map((position) => position.marketValue))
+    : null
 
 export async function getIbkrTradingPositions(
   context: TradingPortfolioBaseContext & { accountId: string }

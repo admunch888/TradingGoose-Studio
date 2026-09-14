@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader } from '@/components/ui/empty'
 import { LoadingAgent } from '@/components/ui/loading-agent'
 import { Separator } from '@/components/ui/separator'
-import { getListingIdentityKey } from '@/lib/listing/identity'
+import { getListingIdentityKey, type ListingIdentity } from '@/lib/listing/identity'
 import { MARKET_QUOTE_SNAPSHOT_REQUEST_CAP } from '@/lib/market/quote-snapshot-contract'
 import { cn } from '@/lib/utils'
 import { useMarketQuoteSnapshots } from '@/hooks/queries/market-quote-snapshots'
@@ -108,6 +108,29 @@ const formatAsOf = (timestamp: string | undefined, locale = 'en-US') => {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(parsed))
+}
+
+const formatQuantity = (value: number | null | undefined, locale = 'en-US') => {
+  if (!isFiniteNumber(value)) return 'N/A'
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(value)
+}
+
+const CATALOGUE_ID_PREFIX = /^TG_(LSTG|CRYP|CURR)_/i
+
+/**
+ * The symbol a position row shows. Broker positions such as IBKR futures carry
+ * listings supplied by identity (`MESZ26`); catalogue listings show their id
+ * without the catalogue prefix.
+ */
+const getPositionInstrument = (listing: ListingIdentity | null | undefined): string | null => {
+  if (!listing) return null
+  if (listing.listing_type === 'default') {
+    return listing.listing_id.replace(CATALOGUE_ID_PREFIX, '') || null
+  }
+  const base = listing.base_id.replace(CATALOGUE_ID_PREFIX, '')
+  const quote = listing.quote_id.replace(CATALOGUE_ID_PREFIX, '')
+  if (!base) return null
+  return quote ? `${base}/${quote}` : base
 }
 
 type MetricTone = 'neutral' | 'positive' | 'negative' | 'warning'
@@ -434,6 +457,23 @@ export function PortfolioSnapshotWidgetBody({
     : quoteSnapshotsQuery.isFetching
       ? 'warning'
       : 'neutral'
+  const positionRows = snapshot.positions.map((position, index) => {
+    const listingKey = position.listingIdentity
+      ? getListingIdentityKey(position.listingIdentity)
+      : null
+    const quote = listingKey && !quoteErrorMessage ? quoteSnapshotsQuery.data?.[listingKey] : null
+    return {
+      key: `${listingKey ?? 'unlisted'}:${index}`,
+      instrument: getPositionInstrument(position.listingIdentity) ?? copy.unknown,
+      quantity: position.quantity,
+      averagePrice: position.averagePrice,
+      lastPrice: isFiniteNumber(quote?.lastPrice) ? quote.lastPrice : position.marketPrice,
+      change: quote?.change,
+      marketValue: position.marketValue,
+      unrealizedPnl: position.unrealizedPnl,
+      unrealizedPnlPercent: position.unrealizedPnlPercent,
+    }
+  })
 
   return (
     <div className='flex h-full min-h-0 flex-col bg-background'>
@@ -602,6 +642,102 @@ export function PortfolioSnapshotWidgetBody({
                   hint={snapshot.accountId}
                 />
               </MetricGroup>
+            </div>
+            <Separator className='my-3 bg-border/60' />
+
+            <div className='p-3'>
+              <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                <h3 className='font-medium text-sm'>{copy.positions}</h3>
+                <Badge
+                  variant='outline'
+                  className='rounded-sm px-1.5 py-0 font-medium font-mono text-[10px]'
+                >
+                  {positionRows.length}
+                </Badge>
+              </div>
+              {positionRows.length === 0 ? (
+                <div className='mt-2 text-muted-foreground text-xs'>{copy.noOpenPositions}</div>
+              ) : (
+                <div className='mt-2 overflow-x-auto rounded-md border border-border/60'>
+                  <table className='w-full min-w-[640px] font-mono text-xs tabular-nums'>
+                    <thead className='bg-muted/40 text-[10px] text-muted-foreground uppercase tracking-[0.08em]'>
+                      <tr>
+                        <th scope='col' className='px-3 py-2 text-left font-medium'>
+                          {copy.instrument}
+                        </th>
+                        <th scope='col' className='px-3 py-2 text-right font-medium'>
+                          {copy.position}
+                        </th>
+                        <th scope='col' className='px-3 py-2 text-right font-medium'>
+                          {copy.averagePrice}
+                        </th>
+                        <th scope='col' className='px-3 py-2 text-right font-medium'>
+                          {copy.lastPrice}
+                        </th>
+                        <th scope='col' className='px-3 py-2 text-right font-medium'>
+                          {copy.change}
+                        </th>
+                        <th scope='col' className='px-3 py-2 text-right font-medium'>
+                          {copy.marketValue}
+                        </th>
+                        <th scope='col' className='px-3 py-2 text-right font-medium'>
+                          {copy.unrealizedPnl}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positionRows.map((row) => (
+                        <tr key={row.key} className='border-border/60 border-t'>
+                          <th
+                            scope='row'
+                            className='px-3 py-2 text-left font-medium font-sans text-foreground'
+                          >
+                            {row.instrument}
+                          </th>
+                          <td
+                            className={cn(
+                              'px-3 py-2 text-right',
+                              metricToneClassName[getNumberTone(row.quantity)]
+                            )}
+                          >
+                            {formatQuantity(row.quantity, locale)}
+                          </td>
+                          <td className='px-3 py-2 text-right'>
+                            {formatCurrency(row.averagePrice, currency, locale)}
+                          </td>
+                          <td className='px-3 py-2 text-right'>
+                            {formatCurrency(row.lastPrice, currency, locale)}
+                          </td>
+                          <td
+                            className={cn(
+                              'px-3 py-2 text-right',
+                              metricToneClassName[getNumberTone(row.change)]
+                            )}
+                          >
+                            {formatSignedCurrency(row.change, currency, locale)}
+                          </td>
+                          <td className='px-3 py-2 text-right'>
+                            {formatCurrency(row.marketValue, currency, locale)}
+                          </td>
+                          <td
+                            className={cn(
+                              'px-3 py-2 text-right',
+                              metricToneClassName[getNumberTone(row.unrealizedPnl)]
+                            )}
+                          >
+                            <div>{formatSignedCurrency(row.unrealizedPnl, currency, locale)}</div>
+                            {isFiniteNumber(row.unrealizedPnlPercent) ? (
+                              <div className='text-[10px] opacity-80'>
+                                {formatPercent(row.unrealizedPnlPercent, locale)}
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
             <Separator className='my-3 bg-border/60' />
 

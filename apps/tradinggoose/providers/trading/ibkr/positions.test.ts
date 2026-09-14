@@ -115,6 +115,26 @@ describe('normalizeIbkrPositions', () => {
     expect(positions[0]?.quantity).toBe(2)
   })
 
+  it('reports the per-unit average price for futures, as TWS does', () => {
+    const [withAvgPrice, withAvgCostOnly] = normalizeIbkrPositions(
+      [
+        {
+          ticker: 'MES',
+          assetClass: 'FUT',
+          position: 2,
+          avgCost: 38526.85,
+          avgPrice: 7705.37,
+          multiplier: 5,
+        },
+        { ticker: 'ES', assetClass: 'FUT', position: 1, avgCost: 300000, multiplier: 50 },
+      ],
+      context
+    )
+
+    expect(withAvgPrice?.averagePrice).toBe(7705.37)
+    expect(withAvgCostOnly?.averagePrice).toBe(6000)
+  })
+
   it('gives each position a listing supplied by identity so its quotes skip the catalogue', () => {
     const positions = normalizeIbkrPositions(
       [
