@@ -10,6 +10,7 @@ import { withTimeout } from '@/lib/copilot/local-runtime/with-timeout'
 import {
   buildLocalWorkingMessages,
   type LocalWorkingMessage,
+  summarizeWorkingMessages,
 } from '@/lib/copilot/local-runtime/working-messages'
 import { loadLocalCopilotWorkspaceInstructions } from '@/lib/copilot/local-runtime/workspace-instructions'
 import { createLogger } from '@/lib/logs/console/logger'
@@ -226,18 +227,31 @@ export async function runLocalCopilotTurn(
       throw new Error('Request aborted')
     }
 
-    const stream = await client.chat.completions.create(
-      {
-        model: modelId,
-        // buildLocalWorkingMessages already trimmed this list and prepended the
-        // system prompt; re-trimming here would prepend a second copy.
-        messages: workingMessages as never,
-        tools: openAiTools as never,
-        stream: true,
-        ...samplingOptions,
-      },
-      { signal: ctx.signal }
-    )
+    const stream = await client.chat.completions
+      .create(
+        {
+          model: modelId,
+          // buildLocalWorkingMessages already trimmed this list and prepended the
+          // system prompt; re-trimming here would prepend a second copy.
+          messages: workingMessages as never,
+          tools: openAiTools as never,
+          stream: true,
+          ...samplingOptions,
+        },
+        { signal: ctx.signal }
+      )
+      .catch((error: unknown) => {
+        // A refused request often carries no body (SGLang answers some template
+        // errors with an empty 400), so record what was sent - its shape, not
+        // its content - to make the refusal diagnosable.
+        logger.error('Local copilot model request refused', {
+          conversationId: params.conversationId,
+          iteration,
+          continuation: Boolean(params.continuation),
+          ...summarizeWorkingMessages(workingMessages),
+        })
+        throw error
+      })
 
     let textBuffer = ''
     const toolCalls = new Map<number, ToolCallAccumulator>()

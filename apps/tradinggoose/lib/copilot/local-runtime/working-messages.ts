@@ -102,10 +102,6 @@ export function buildLocalWorkingMessages(params: {
 }
 
 /**
- * Drops the oldest whole tool exchanges until the estimated prompt fits the
- * model context window, then prepends the system prompt.
- */
-/**
  * Makes the history one an OpenAI-compatible server accepts: every assistant
  * tool call has its tool result, and every tool result answers a tool call
  * made before it. A session saved by an earlier build could hold a step whose
@@ -145,11 +141,37 @@ export function repairToolCallPairs(messages: LocalWorkingMessage[]): LocalWorki
   return repaired
 }
 
+/**
+ * How much of an older tool result the rebuilt history carries. Block and
+ * workflow metadata results run to hundreds of kilobytes; replaying them whole
+ * pushed the conversation itself out of the context budget.
+ */
+export const MAX_HISTORY_TOOL_RESULT_CHARS = 16_000
+
+const compactToolResult = (message: LocalWorkingMessage): LocalWorkingMessage =>
+  isToolMessage(message) &&
+  typeof message.content === 'string' &&
+  message.content.length > MAX_HISTORY_TOOL_RESULT_CHARS
+    ? { ...message, content: truncate(message.content, MAX_HISTORY_TOOL_RESULT_CHARS) }
+    : message
+
+/**
+ * Drops the oldest whole tool exchanges until the estimated prompt fits the
+ * model context window, then prepends the system prompt.
+ *
+ * The latest user message is never dropped. A continuation (the turn resumed
+ * after a browser tool such as `plan`) adds no user message of its own, so
+ * after a few large tool results trimming used to remove the user's request
+ * itself; Qwen3-family chat templates then raise "No user query found in
+ * messages" and SGLang answered every such continuation with 400 before
+ * prefill. Older tool results are compacted first, and the pairs are repaired
+ * again after trimming so no result outlives its call.
+ */
 export function trimLocalWorkingMessages(
   messages: LocalWorkingMessage[],
   options: { systemPrompt: string; contextWindow?: number }
 ): LocalWorkingMessage[] {
-  messages = repairToolCallPairs(messages)
+  messages = repairToolCallPairs(messages).map(compactToolResult)
   const contextWindow = options.contextWindow ?? DEFAULT_LOCAL_CONTEXT_WINDOW
   const systemMessage: LocalWorkingMessage = { role: 'system', content: options.systemPrompt }
 
@@ -159,10 +181,16 @@ export function trimLocalWorkingMessages(
 
   const estimate = (list: LocalWorkingMessage[]) =>
     list.reduce((total, message) => total + JSON.stringify(message).length, 0)
+  const latestUserIndex = (list: LocalWorkingMessage[]) =>
+    list.map((message) => message.role).lastIndexOf('user')
 
   let trimmed = messages
   let index = 0
   while (estimate(trimmed) > budgetChars && index < trimmed.length - 2) {
+    if (index === latestUserIndex(trimmed)) {
+      index++
+      continue
+    }
     // Never split an assistant tool_calls message from its tool results: drop
     // forward until the next user/assistant message so the pairing survives.
     let end = index + 1
@@ -172,7 +200,32 @@ export function trimLocalWorkingMessages(
     if (isToolMessage(trimmed[index])) index++
   }
 
-  return [systemMessage, ...trimmed]
+  return [systemMessage, ...repairToolCallPairs(trimmed)]
+}
+
+/**
+ * The shape of a request's messages, for logging a model server refusal
+ * without logging the conversation: roles in order (tool call counts on
+ * assistant steps), whether a user message is present, and the size.
+ */
+export function summarizeWorkingMessages(messages: LocalWorkingMessage[]): {
+  messageCount: number
+  roles: string
+  hasUserMessage: boolean
+  estimatedChars: number
+} {
+  return {
+    messageCount: messages.length,
+    roles: messages
+      .map((message) =>
+        message.tool_calls?.length
+          ? `${message.role}(calls:${message.tool_calls.length})`
+          : message.role
+      )
+      .join(','),
+    hasUserMessage: messages.some((message) => message.role === 'user'),
+    estimatedChars: messages.reduce((total, message) => total + JSON.stringify(message).length, 0),
+  }
 }
 
 function truncate(value: string, max: number): string {
