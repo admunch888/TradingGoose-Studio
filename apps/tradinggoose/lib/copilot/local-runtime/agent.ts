@@ -279,11 +279,20 @@ export async function runLocalCopilotTurn(
       return { text: fullText, workingMessages, awaiting: null }
     }
 
+    // Client-only tool -> hand the call to the browser and stop.
+    const clientOnly = orderedCalls.find((call) => LOCAL_CLIENT_ONLY_TOOLS.has(call.name))
+
+    // Every call recorded here must get a result before the next model request:
+    // an OpenAI-compatible server rejects (400) an assistant tool call with no
+    // tool message. Halting on a client-only tool only ever produces ITS result,
+    // so the other calls of that step are left out (the model re-issues them),
+    // and ids are the ones the frames and tool messages use.
+    const recordedCalls = clientOnly ? [clientOnly] : orderedCalls
     const toolCallsMessage: LocalWorkingMessage = {
       role: 'assistant',
       content: textBuffer || null,
-      tool_calls: orderedCalls.map((call, position) => ({
-        id: call.id || `call_${call.index}_${position}`,
+      tool_calls: recordedCalls.map((call) => ({
+        id: resolveToolCallId(call),
         type: 'function',
         function: { name: call.name, arguments: call.arguments || '{}' },
       })),
@@ -291,13 +300,10 @@ export async function runLocalCopilotTurn(
     workingMessages.push(toolCallsMessage)
     await hooks.onAssistantToolCalls?.(toolCallsMessage)
 
-    // Client-only tool -> hand the call to the browser and stop.
-    //
     // The function_call frame MUST be emitted here, before the halt: the browser
     // only learns which tool to run from `response.output_item.done`
     // (streaming.ts), so returning `awaiting` alone left the turn waiting for a
     // tool call the client never saw.
-    const clientOnly = orderedCalls.find((call) => LOCAL_CLIENT_ONLY_TOOLS.has(call.name))
     if (clientOnly) {
       return {
         text: fullText,

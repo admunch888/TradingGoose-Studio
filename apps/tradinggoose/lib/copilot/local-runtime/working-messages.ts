@@ -105,10 +105,51 @@ export function buildLocalWorkingMessages(params: {
  * Drops the oldest whole tool exchanges until the estimated prompt fits the
  * model context window, then prepends the system prompt.
  */
+/**
+ * Makes the history one an OpenAI-compatible server accepts: every assistant
+ * tool call has its tool result, and every tool result answers a tool call
+ * made before it. A session saved by an earlier build could hold a step whose
+ * other calls never ran (the loop halted on a browser tool), and resuming it
+ * failed with a 400 on every continuation. Unanswered calls are dropped (an
+ * assistant step left with no calls keeps its text, or goes), and so are
+ * orphan results.
+ */
+export function repairToolCallPairs(messages: LocalWorkingMessage[]): LocalWorkingMessage[] {
+  const answered = new Set(
+    messages.filter(isToolMessage).map((message) => message.tool_call_id as string)
+  )
+  const called = new Set<string>()
+  const repaired: LocalWorkingMessage[] = []
+
+  for (const message of messages) {
+    if (isToolMessage(message)) {
+      if (called.has(message.tool_call_id as string)) repaired.push(message)
+      continue
+    }
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      const calls = message.tool_calls.filter((call) => answered.has(call.id))
+      calls.forEach((call) => called.add(call.id))
+      if (calls.length > 0) {
+        repaired.push(
+          calls.length === message.tool_calls.length ? message : { ...message, tool_calls: calls }
+        )
+      } else if (message.content?.trim()) {
+        const { tool_calls: _dropped, ...textOnly } = message
+        repaired.push(textOnly)
+      }
+      continue
+    }
+    repaired.push(message)
+  }
+
+  return repaired
+}
+
 export function trimLocalWorkingMessages(
   messages: LocalWorkingMessage[],
   options: { systemPrompt: string; contextWindow?: number }
 ): LocalWorkingMessage[] {
+  messages = repairToolCallPairs(messages)
   const contextWindow = options.contextWindow ?? DEFAULT_LOCAL_CONTEXT_WINDOW
   const systemMessage: LocalWorkingMessage = { role: 'system', content: options.systemPrompt }
 
