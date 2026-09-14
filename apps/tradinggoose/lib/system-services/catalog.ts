@@ -291,7 +291,8 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
   {
     id: 'vllm',
     displayName: 'Self-hosted / custom OpenAI-compatible endpoint',
-    description: 'Point the app at any OpenAI-compatible host: vLLM, llama.cpp, LM Studio, or a local gateway. Models are discovered from /v1/models and offered in the Copilot model picker as vllm/<model>.',
+    description:
+      'Point the app at any OpenAI-compatible host: vLLM, llama.cpp, LM Studio, or a local gateway. Models are discovered from /v1/models and offered in the Copilot model picker as vllm/<model>.',
     credentialFields: [
       {
         key: 'apiKey',
@@ -304,8 +305,40 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
       {
         key: 'baseUrl',
         label: 'Base URL',
-        description: 'Base URL of the OpenAI-compatible host, e.g. http://host:8080. Do not include a trailing /v1; the app appends it.',
+        description:
+          'Base URL of the OpenAI-compatible host, e.g. http://host:8080. Do not include a trailing /v1; the app appends it.',
         type: 'url',
+        required: false,
+      },
+      {
+        key: 'copilotContextWindow',
+        label: 'Copilot Context Window (tokens)',
+        description:
+          'Context length the model is served with (e.g. SGLang --context-length). Copilot keeps about half of it for conversation history. Empty uses 32768.',
+        type: 'number',
+        required: false,
+      },
+      {
+        key: 'copilotEnableThinking',
+        label: 'Copilot Thinking',
+        description:
+          'Ask the model to think before answering (sends chat_template_kwargs.enable_thinking=true, for Qwen3-family templates). Better planning for multi-step tasks, slower replies. Off leaves the server default.',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'copilotTemperature',
+        label: 'Copilot Temperature',
+        description:
+          'Sampling temperature for Copilot, 0 to 2. Empty uses the server or model default.',
+        type: 'number',
+        required: false,
+      },
+      {
+        key: 'copilotMaxToolIterations',
+        label: 'Copilot Max Tool Steps',
+        description: 'Model calls allowed in one Copilot turn, 1 to 100. Empty uses 20.',
+        type: 'number',
         required: false,
       },
     ],

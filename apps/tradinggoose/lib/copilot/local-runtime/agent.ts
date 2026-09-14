@@ -1,13 +1,17 @@
 import OpenAI from 'openai'
-import { getLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
+import { buildLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
+import {
+  buildLocalCopilotSamplingOptions,
+  resolveLocalCopilotSettings,
+} from '@/lib/copilot/local-runtime/settings'
 import type { LocalAgentTurnParams, LocalSseEventSink } from '@/lib/copilot/local-runtime/types'
 import { withTimeout } from '@/lib/copilot/local-runtime/with-timeout'
 import {
   buildLocalWorkingMessages,
-  DEFAULT_LOCAL_CONTEXT_WINDOW,
   type LocalWorkingMessage,
 } from '@/lib/copilot/local-runtime/working-messages'
+import { loadLocalCopilotWorkspaceInstructions } from '@/lib/copilot/local-runtime/workspace-instructions'
 import { createLogger } from '@/lib/logs/console/logger'
 import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
 
@@ -39,7 +43,6 @@ export const LOCAL_CLIENT_ONLY_TOOLS = new Set([
 /** Hard cap on a single server tool - see with-timeout.ts for why it exists. */
 const TOOL_TIMEOUT_MS = 120_000
 
-const MAX_TOOL_ITERATIONS = 20
 /** Hard cap on assistant text before truncation, to bound the SSE payload. */
 const MAX_ASSISTANT_TEXT_CHARS = 200_000
 
@@ -198,18 +201,27 @@ export async function runLocalCopilotTurn(
   const manifest = await getCopilotRuntimeToolManifest()
   const openAiTools = buildOpenAiTools(manifest.tools)
 
-  const systemPrompt = getLocalCopilotSystemPrompt()
+  // Deployment settings (context window, thinking, sampling, step budget) and
+  // the workspace's standing instructions are read per turn, so a change in
+  // Admin -> Services or to the instructions skill applies to the next message.
+  const [settings, workspaceInstructions] = await Promise.all([
+    resolveLocalCopilotSettings(),
+    loadLocalCopilotWorkspaceInstructions(ctx.workspaceId),
+  ])
+  const samplingOptions = buildLocalCopilotSamplingOptions(settings)
+
+  const systemPrompt = buildLocalCopilotSystemPrompt({ workspaceInstructions })
   const workingMessages: LocalWorkingMessage[] = buildLocalWorkingMessages({
     systemPrompt,
     priorWorkingMessages: params.priorWorkingMessages ?? [],
     userContent: buildUserContent(params, false),
     continuation: params.continuation,
-    defaultContextWindow: DEFAULT_LOCAL_CONTEXT_WINDOW,
+    contextWindow: settings.contextWindow,
   })
 
   let fullText = ''
 
-  for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+  for (let iteration = 0; iteration < settings.maxToolIterations; iteration++) {
     if (ctx.signal?.aborted) {
       throw new Error('Request aborted')
     }
@@ -222,6 +234,7 @@ export async function runLocalCopilotTurn(
         messages: workingMessages as never,
         tools: openAiTools as never,
         stream: true,
+        ...samplingOptions,
       },
       { signal: ctx.signal }
     )
@@ -389,6 +402,7 @@ export async function runLocalCopilotTurn(
   logger.warn('Local copilot agent hit max tool iterations', {
     conversationId: params.conversationId,
     model: modelId,
+    maxToolIterations: settings.maxToolIterations,
   })
   return { text: fullText, workingMessages, awaiting: null }
 }

@@ -31,6 +31,7 @@ const mockVerifyWorkflowAccess = vi.fn()
 const mockReadBootstrappedReviewTargetSnapshot = vi.fn()
 const mockReadWorkflowSnapshot = vi.fn()
 const mockReadKnowledgeBaseExecute = vi.fn()
+const mockReadSkillExecute = vi.fn()
 const mockAnd = vi.fn((...conditions: unknown[]) => ({ conditions, type: 'and' }))
 const mockEq = vi.fn((field: unknown, value: unknown) => ({ field, type: 'eq', value }))
 const mockOr = vi.fn((...conditions: unknown[]) => ({ conditions, type: 'or' }))
@@ -152,6 +153,12 @@ vi.mock('@/lib/copilot/tools/server/knowledge/knowledge-base', () => ({
   },
 }))
 
+vi.mock('@/lib/copilot/tools/server/entities/skill', () => ({
+  readSkillServerTool: {
+    execute: mockReadSkillExecute,
+  },
+}))
+
 vi.mock('@/lib/yjs/server/bootstrap-review-target', () => ({
   readBootstrappedReviewTargetSnapshot: mockReadBootstrappedReviewTargetSnapshot,
 }))
@@ -168,6 +175,7 @@ describe('processContextsServer', () => {
     mockReadBootstrappedReviewTargetSnapshot.mockReset()
     mockReadWorkflowSnapshot.mockReset()
     mockReadKnowledgeBaseExecute.mockReset()
+    mockReadSkillExecute.mockReset()
     mockAnd.mockClear()
     mockEq.mockClear()
     mockOr.mockClear()
@@ -293,6 +301,49 @@ describe('processContextsServer', () => {
     expect(content.entityDocument.apiKey).toBe('[redacted]')
     expectContextWithinItemLimit(result!.content)
     expect(result!.content).not.toContain('raw-secret')
+  })
+
+  it('includes the content of a skill mentioned in the active workspace', async () => {
+    mockReadSkillExecute.mockResolvedValue({
+      entityId: 'skill-1',
+      entityDocument: { description: 'Futures rules', content: 'Trade MES on paper only.' },
+    })
+    const context = buildCopilotWorkspaceEntityContext({
+      entityKind: 'skill',
+      entityId: 'skill-1',
+      workspaceId: 'workspace-1',
+      label: 'Futures rules',
+    })
+
+    const [result] = await processWorkspaceContext(context)
+
+    expect(mockReadSkillExecute).toHaveBeenCalledWith(
+      { entityId: 'skill-1' },
+      expect.objectContaining({ userId: 'user-1', workspaceId: 'workspace-1' })
+    )
+    expect(result).toMatchObject({ type: context.kind, tag: '@skill-1' })
+    expect(JSON.parse(result!.content).entityDocument.content).toBe('Trade MES on paper only.')
+    expectContextWithinItemLimit(result!.content)
+  })
+
+  it('keeps a skill from another workspace as an id-only reference', async () => {
+    const context = buildCopilotWorkspaceEntityContext({
+      entityKind: 'skill',
+      entityId: 'skill-1',
+      workspaceId: 'workspace-2',
+      label: 'Futures rules',
+    })
+
+    const result = await processWorkspaceContext(context)
+
+    expect(mockReadSkillExecute).not.toHaveBeenCalled()
+    expect(result).toEqual([
+      {
+        type: context.kind,
+        tag: '@skill-1',
+        content: JSON.stringify({ entityId: 'skill-1' }, null, 2),
+      },
+    ])
   })
 
   it.each<[string, ChatContext, string | undefined]>([
