@@ -4,6 +4,7 @@ import {
   type ListingResolved,
   ListingResolvedSchema,
 } from '@/lib/listing/identity'
+import { buildManualListingValue } from '@/lib/listing/manual'
 import { MARKET_API_VERSION, MARKET_BATCH_ID_LIMIT } from '@/lib/market/client/constants'
 import { getBaseUrl } from '@/lib/urls/utils'
 
@@ -237,10 +238,28 @@ export const buildResolvedListingFromRows = (
   return details ? buildResolvedListing(listing, details) : null
 }
 
+/**
+ * A listing supplied by identity (manual entry, IBKR search) resolves from the
+ * identity itself. The catalogue has no row for it, so asking only spends quota:
+ * a watchlist or chart holding one otherwise sent `/api/market/get/listing` for
+ * it on every render, and against a rate-limited catalogue that was a stream of
+ * 429s and a listing shown as `??` / `DEFAULT`.
+ */
+const resolveManualListing = (listing: ListingIdentity): ListingResolved | null =>
+  listing.manual
+    ? buildManualListingValue({
+        symbol: listing.listing_id,
+        assetClass: listing.manual.assetClass,
+        marketCode: listing.manual.marketCode,
+      })
+    : null
+
 export async function resolveListingIdentity(
   listing: ListingIdentity,
   signal?: AbortSignal
 ): Promise<ListingResolved | null> {
+  if (listing.manual) return resolveManualListing(listing)
+
   const rowMaps = await fetchListingResolutionRowMaps([listing], 'strict', signal)
   try {
     return buildResolvedListingFromRows(listing, rowMaps)
@@ -295,13 +314,19 @@ export async function resolveListingIdentities(
   signal?: AbortSignal
 ): Promise<Record<string, ListingResolved | null>> {
   const identities = new Map<string, ListingIdentity>()
+  const resolved: Record<string, ListingResolved | null> = {}
 
   for (const listing of listings) {
     const key = getListingIdentityKey(listing)
-    if (!identities.has(key)) {
-      identities.set(key, listing)
+    if (key in resolved || identities.has(key)) continue
+    if (listing.manual) {
+      resolved[key] = resolveManualListing(listing)
+      continue
     }
+    identities.set(key, listing)
   }
+
+  if (identities.size === 0) return resolved
 
   const rowMaps = await fetchListingResolutionRowMaps(
     Array.from(identities.values()),
@@ -309,7 +334,6 @@ export async function resolveListingIdentities(
     signal
   )
 
-  const resolved: Record<string, ListingResolved | null> = {}
   identities.forEach((listing, key) => {
     try {
       resolved[key] = buildResolvedListingFromRows(listing, rowMaps)
