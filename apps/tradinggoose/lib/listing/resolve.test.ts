@@ -256,4 +256,64 @@ describe('listing resolve row hydration', () => {
     fetchMock.mockRejectedValueOnce({ name: 'AbortError' })
     await expect(resolveListingIdentities([listing])).rejects.toMatchObject({ name: 'AbortError' })
   })
+
+  describe('listings supplied by identity (manual entry, IBKR search)', () => {
+    const mesListing = {
+      listing_id: 'MESZ26',
+      base_id: '',
+      quote_id: '',
+      listing_type: 'default' as const,
+      manual: { assetClass: 'future' as const, marketCode: 'CME' },
+    }
+
+    it('resolves a single one from the identity without asking the catalogue', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch')
+      fetchMock.mockClear()
+
+      expect(await resolveListingIdentity(mesListing)).toEqual({
+        listingIdentity: mesListing,
+        base: 'MESZ26',
+        name: 'MESZ26',
+        assetClass: 'future',
+        marketCode: 'CME',
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('sends only catalogue listings to the catalogue in a batch', async () => {
+      const stockListing = {
+        listing_id: 'AAPL',
+        base_id: '',
+        quote_id: '',
+        listing_type: 'default' as const,
+      }
+      const requestedIds: string[][] = []
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = new URL(String(input), 'https://tradinggoose.test')
+        requestedIds.push(url.searchParams.getAll('listing_id'))
+        return new Response(JSON.stringify({ data: { base: 'AAPL', name: 'Apple Inc.' } }), {
+          status: 200,
+        })
+      })
+
+      const resolved = await resolveListingIdentities([mesListing, stockListing, mesListing])
+
+      expect(requestedIds).toEqual([['AAPL']])
+      expect(resolved[getListingIdentityKey(mesListing)]).toMatchObject({
+        base: 'MESZ26',
+        assetClass: 'future',
+      })
+      expect(resolved[getListingIdentityKey(stockListing)]).toMatchObject({ base: 'AAPL' })
+    })
+
+    it('makes no request at all when every listing is supplied by identity', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch')
+      fetchMock.mockClear()
+
+      const resolved = await resolveListingIdentities([mesListing])
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(Object.keys(resolved)).toEqual([getListingIdentityKey(mesListing)])
+    })
+  })
 })
