@@ -75,6 +75,7 @@ import { NoteBlock } from '@/blocks/blocks/note'
 import { NotionBlock } from '@/blocks/blocks/notion'
 import { OneDriveBlock } from '@/blocks/blocks/onedrive'
 import { OpenAIBlock } from '@/blocks/blocks/openai'
+import { OptionsChainBlock } from '@/blocks/blocks/options_chain'
 import { OutlookBlock } from '@/blocks/blocks/outlook'
 import { ParallelBlock } from '@/blocks/blocks/parallel'
 import { PerplexityBlock } from '@/blocks/blocks/perplexity'
@@ -188,6 +189,7 @@ export const registry: Record<string, BlockConfig> = {
   jira: JiraBlock,
   knowledge: KnowledgeBlock,
   kronos_forecast: KronosForecastBlock,
+  options_chain: OptionsChainBlock,
   linear: LinearBlock,
   linkup: LinkupBlock,
   mcp: McpBlock,

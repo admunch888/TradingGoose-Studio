@@ -83,9 +83,11 @@ import {
   knowledgeSearchTool,
   knowledgeUploadChunkTool,
 } from '@/tools/knowledge'
+import { kronosForecastTool } from '@/tools/kronos'
 import { linearCreateIssueTool, linearReadIssuesTool } from '@/tools/linear'
 import { linkupSearchTool } from '@/tools/linkup'
 import { historicalDataTool } from '@/tools/market_data'
+import { optionsChainTool } from '@/tools/market_data/options'
 import { mem0AddMemoriesTool, mem0GetMemoriesTool, mem0SearchMemoriesTool } from '@/tools/mem0'
 import { memoryAddTool, memoryDeleteTool, memoryGetAllTool, memoryGetTool } from '@/tools/memory'
 import {
@@ -111,7 +113,6 @@ import {
   queryTool as mongodbQueryTool,
   updateTool as mongodbUpdateTool,
 } from '@/tools/mongodb'
-import { kronosForecastTool } from '@/tools/kronos'
 import {
   deleteTool as mysqlDeleteTool,
   executeTool as mysqlExecuteTool,
@@ -303,6 +304,7 @@ export const tools: Record<string, ToolConfig> = {
   openai_embeddings: openAIEmbeddings,
   http_request: httpRequest,
   historical_data_fetch: historicalDataTool,
+  options_chain_fetch: optionsChainTool,
   huggingface_chat: huggingfaceChatTool,
   function_execute: functionExecuteTool,
   vision_tool: visionTool,
