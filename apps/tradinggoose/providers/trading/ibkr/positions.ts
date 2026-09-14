@@ -55,8 +55,7 @@ export const mapIbkrAssetClass = (value: unknown): UnifiedTradingSymbolAssetClas
     case 'FUND':
     case 'MUTUALFUND':
       return 'mutualfund'
-    case 'OPT':
-      return 'future'
+    // Options (OPT) are not a supported asset class; they used to be labelled futures.
     default:
       return null
   }

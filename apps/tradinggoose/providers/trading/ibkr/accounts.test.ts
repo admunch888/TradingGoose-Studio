@@ -80,4 +80,39 @@ describe('normalizeIbkrTradingAccount', () => {
       'missing account id'
     )
   })
+
+  it('normalizes a /portfolio/accounts row', () => {
+    const identity = normalizeIbkrTradingAccount(
+      {
+        id: 'U7654321',
+        accountId: 'U7654321',
+        accountAlias: 'Long-term',
+        currency: 'GBP',
+        acctCustType: 'LLC',
+        clearingStatus: 'O',
+        type: 'LIVE',
+      },
+      context
+    )
+
+    expect(identity).toMatchObject({
+      accountId: 'U7654321',
+      accountName: 'Long-term',
+      accountType: 'margin',
+      baseCurrency: 'GBP',
+      accountStatus: 'active',
+    })
+  })
+
+  it.each([
+    ['P', 'restricted'],
+    ['N', 'restricted'],
+    ['C', 'closed'],
+    ['R', 'closed'],
+    ['A', 'closed'],
+  ])('maps clearing status %s to %s', (clearingStatus, accountStatus) => {
+    expect(normalizeIbkrTradingAccount({ id: 'U1', clearingStatus }, context).accountStatus).toBe(
+      accountStatus
+    )
+  })
 })

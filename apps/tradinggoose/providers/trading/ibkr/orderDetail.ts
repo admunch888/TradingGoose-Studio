@@ -1,12 +1,20 @@
 import { buildIbkrAuthHeaders } from '@/providers/trading/ibkr/auth'
-import { buildIbkrAccountUrl } from '@/providers/trading/ibkr/client'
-import { fetchBrokerJson } from '@/providers/trading/portfolio-utils'
+import { buildIbkrApiUrl } from '@/providers/trading/ibkr/client'
+import { ensureIbkrSession } from '@/providers/trading/ibkr/session'
+import { fetchBrokerJson, TradingBrokerRequestError } from '@/providers/trading/portfolio-utils'
 import type {
   TradingOrderDetailInput,
   TradingOrderDetailOutput,
   TradingOrderDetailResult,
   TradingOrderHistoryRecord,
 } from '@/providers/trading/types'
+
+/**
+ * Statuses with which /iserver/account/order/status answers an order it cannot
+ * report (IBKR documents 503 for orders from a previous session); the lookup
+ * then falls back to the live order list instead of failing.
+ */
+const ORDER_STATUS_UNAVAILABLE = new Set([400, 404, 500, 503])
 
 const firstDefinedString = (...values: unknown[]): string | null => {
   for (const value of values) {
@@ -20,67 +28,117 @@ const firstDefinedString = (...values: unknown[]): string | null => {
   return null
 }
 
+/** IBKR sends most order quantities and prices as numeric strings. */
+const firstNumber = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
 export const resolveIbkrOrderDetailProviderOrderId = (
   historyRecord: TradingOrderHistoryRecord
 ): string | null =>
   firstDefinedString(
     historyRecord?.response?.orderId,
     historyRecord?.normalizedOrder?.id,
+    historyRecord?.normalizedOrder?.raw?.[0]?.order_id,
     historyRecord?.normalizedOrder?.raw?.order?.order_id,
     historyRecord?.response?.raw?.order?.order_id,
     historyRecord?.response?.raw?.order_id
   )
 
+/**
+ * Unix seconds or milliseconds (as a number or numeric string), IBKR's compact
+ * `YYMMDDhhmmss` order time, or any parseable date. The compact form carries no
+ * zone and is read as UTC.
+ */
 const normalizeIbkrOrderTimestamp = (value: unknown): string | null => {
+  const toIso = (epoch: number) => new Date(epoch > 1e12 ? epoch : epoch * 1000).toISOString()
+
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date(value * 1000).toISOString()
+    return toIso(value)
   }
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   if (!trimmed) return null
+
+  const compact = /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(trimmed)
+  if (compact) {
+    const [, year, month, day, hour, minute, second] = compact
+    return `20${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`
+  }
+
   const numeric = Number(trimmed)
   if (Number.isFinite(numeric)) {
-    return new Date(numeric * 1000).toISOString()
+    return toIso(numeric)
   }
   const parsed = Date.parse(trimmed)
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
 }
 
+/**
+ * Normalizes either IBKR order shape: the single-order status
+ * (`order_status`, `total_size`, `cum_fill`, `size`, `average_price`) or a live
+ * order list row (`status`, `totalSize`, `filledQuantity`, `remainingQuantity`,
+ * `avgPrice`).
+ */
 export const normalizeIbkrOrderDetail = (
   appOrderId: string,
   providerOrderId: string,
   historyRecord: TradingOrderHistoryRecord,
   rawOrder: Record<string, any>
-): TradingOrderDetailOutput => ({
-  appOrderId,
-  provider: 'ibkr',
-  providerOrderId,
-  environment: historyRecord.environment ?? null,
-  clientOrderId: firstDefinedString(rawOrder.order_ref, rawOrder.orderRef),
-  createdAt: normalizeIbkrOrderTimestamp(rawOrder.submit_time) ?? undefined,
-  updatedAt: normalizeIbkrOrderTimestamp(rawOrder.last_update_time) ?? undefined,
-  submittedAt: normalizeIbkrOrderTimestamp(rawOrder.submit_time) ?? undefined,
-  filledAt: undefined,
-  canceledAt: undefined,
-  expiredAt: undefined,
-  symbol: firstDefinedString(rawOrder.ticker, rawOrder.symbol),
-  side: firstDefinedString(rawOrder.side),
-  status: firstDefinedString(rawOrder.status),
-  orderType: firstDefinedString(rawOrder.order_type, rawOrder.orderType),
-  timeInForce: firstDefinedString(rawOrder.tif, rawOrder.timeInForce),
-  quantity: rawOrder.quantity ?? rawOrder.totalQuantity ?? null,
-  filledQuantity: rawOrder.filled ?? rawOrder.filledQuantity ?? null,
-  remainingQuantity:
-    rawOrder.remainingQuantity ??
-    (typeof rawOrder.quantity === 'number' && typeof rawOrder.filled === 'number'
-      ? rawOrder.quantity - rawOrder.filled
-      : null),
-  notional: null,
-  limitPrice: rawOrder.lmt_price ?? rawOrder.limitPrice ?? null,
-  stopPrice: rawOrder.aux_price ?? rawOrder.auxPrice ?? rawOrder.stopPrice ?? null,
-  averageFillPrice: rawOrder.avg_price ?? rawOrder.averageFillPrice ?? null,
-  raw: rawOrder,
-})
+): TradingOrderDetailOutput => {
+  const quantity = firstNumber(
+    rawOrder.total_size,
+    rawOrder.totalSize,
+    rawOrder.quantity,
+    rawOrder.totalQuantity
+  )
+  const filledQuantity = firstNumber(rawOrder.cum_fill, rawOrder.filledQuantity, rawOrder.filled)
+  const submittedAt =
+    normalizeIbkrOrderTimestamp(rawOrder.order_time) ??
+    normalizeIbkrOrderTimestamp(rawOrder.submit_time)
+
+  return {
+    appOrderId,
+    provider: 'ibkr',
+    providerOrderId,
+    environment: historyRecord.environment ?? null,
+    clientOrderId: firstDefinedString(rawOrder.order_ref, rawOrder.orderRef),
+    createdAt: submittedAt ?? undefined,
+    updatedAt:
+      normalizeIbkrOrderTimestamp(rawOrder.lastExecutionTime_r) ??
+      normalizeIbkrOrderTimestamp(rawOrder.last_update_time) ??
+      undefined,
+    submittedAt: submittedAt ?? undefined,
+    filledAt: undefined,
+    canceledAt: undefined,
+    expiredAt: undefined,
+    symbol: firstDefinedString(rawOrder.symbol, rawOrder.ticker),
+    side: firstDefinedString(rawOrder.side),
+    status: firstDefinedString(rawOrder.order_status, rawOrder.status),
+    orderType: firstDefinedString(rawOrder.order_type, rawOrder.orderType, rawOrder.origOrderType),
+    timeInForce: firstDefinedString(rawOrder.tif, rawOrder.timeInForce),
+    quantity,
+    filledQuantity,
+    remainingQuantity:
+      firstNumber(rawOrder.size, rawOrder.remainingQuantity) ??
+      (quantity !== null && filledQuantity !== null ? quantity - filledQuantity : null),
+    notional: null,
+    limitPrice: firstNumber(rawOrder.lmt_price, rawOrder.limitPrice, rawOrder.price),
+    stopPrice: firstNumber(rawOrder.aux_price, rawOrder.auxPrice, rawOrder.stopPrice),
+    averageFillPrice: firstNumber(
+      rawOrder.average_price,
+      rawOrder.avgPrice,
+      rawOrder.avg_price,
+      rawOrder.averageFillPrice
+    ),
+    raw: rawOrder,
+  }
+}
 
 const toRecord = (value: unknown): Record<string, any> => {
   if (value && typeof value === 'object') {
@@ -103,8 +161,12 @@ const flattenOrders = (value: unknown): any[] => {
     if (Array.isArray(recordOrders)) {
       return recordOrders.flatMap(flattenOrders)
     }
+    // Live order rows carry `orderId`; older shapes carry `order_id`.
+    if ('order_id' in record || 'orderId' in record) {
+      return [record]
+    }
   }
-  return value && typeof value === 'object' && 'order_id' in (value as object) ? [value] : []
+  return []
 }
 
 export const findIbkrOrderById = (
@@ -132,6 +194,10 @@ export const findIbkrOrderById = (
   return null
 }
 
+/**
+ * Looks an order up by its IBKR order id. Neither IBKR order endpoint is
+ * account-scoped, and neither reports orders from an earlier brokerage session.
+ */
 export const ibkrOrderDetailRequest = async (
   historyRecord: TradingOrderHistoryRecord,
   params: TradingOrderDetailInput
@@ -141,28 +207,43 @@ export const ibkrOrderDetailRequest = async (
     throw new Error('Unable to resolve IBKR provider order ID from order history record.')
   }
 
-  const accountId = params.accountId ?? historyRecord?.response?.accountId
-  if (!accountId) {
-    throw new Error('IBKR order detail requires accountId.')
-  }
-
+  // The order endpoints require a live session with /iserver/accounts read in it.
+  await ensureIbkrSession({ accessToken: params.accessToken })
   const headers = buildIbkrAuthHeaders({ accessToken: params.accessToken })
-  const rawOrders = await fetchBrokerJson<unknown>({
+
+  const status = await fetchBrokerJson<Record<string, unknown> | null>({
     providerId: 'ibkr',
-    url: buildIbkrAccountUrl(String(accountId), '/orders'),
-    init: {
-      method: 'GET',
-      headers,
-    },
+    url: buildIbkrApiUrl(`/iserver/account/order/status/${encodeURIComponent(providerOrderId)}`),
+    init: { method: 'GET', headers },
+  }).catch((error) => {
+    if (error instanceof TradingBrokerRequestError && ORDER_STATUS_UNAVAILABLE.has(error.status)) {
+      return null
+    }
+    throw error
   })
 
-  const rawOrder = findIbkrOrderById(
-    rawOrders,
-    providerOrderId,
-    historyRecord?.response?.clientOrderId
-  )
+  let rawOrder =
+    status && typeof status === 'object' && firstDefinedString(status.order_id) === providerOrderId
+      ? (status as Record<string, any>)
+      : null
+
   if (!rawOrder) {
-    throw new Error('IBKR order not found in account orders.')
+    const liveOrders = await fetchBrokerJson<unknown>({
+      providerId: 'ibkr',
+      url: buildIbkrApiUrl('/iserver/account/orders'),
+      init: { method: 'GET', headers },
+    })
+    rawOrder = findIbkrOrderById(
+      liveOrders,
+      providerOrderId,
+      historyRecord?.response?.clientOrderId
+    )
+  }
+
+  if (!rawOrder) {
+    throw new Error(
+      'IBKR order not found. IBKR only reports orders from the current brokerage session.'
+    )
   }
 
   return {

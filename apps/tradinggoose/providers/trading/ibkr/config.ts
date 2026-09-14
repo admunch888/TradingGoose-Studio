@@ -73,10 +73,12 @@ export const ibkrTradingProviderConfig: TradingProviderConfig = {
           excludes: ['limitPrice', 'stopPrice'],
         },
       ],
-      timeInForce: ['day', 'gtc', 'ioc', 'fok', 'gtd'],
+      // The Client Portal order ticket has no FOK or GTD time in force.
+      timeInForce: ['day', 'gtc', 'ioc'],
     },
     portfolioDetail: {
-      performanceWindows: ['1W', '1M', '3M', 'YTD', '1Y', 'MAX'],
+      // /pa/performance offers nothing longer than 12 months, so no MAX window.
+      performanceWindows: ['1W', '1M', '3M', 'YTD', '1Y'],
     },
   },
   rulePrecedence: {

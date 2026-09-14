@@ -125,7 +125,9 @@ function getProviderAuthTemplate(
       }
     case 'ibkr':
       return {
-        tokenEndpoint: 'https://api.ibkr.com/v1/api/oauth2/token',
+        // IBKR_TOKEN_ENDPOINT was documented but never read.
+        tokenEndpoint:
+          getEnv('IBKR_TOKEN_ENDPOINT')?.trim() || 'https://api.ibkr.com/v1/api/oauth2/token',
         useBasicAuth: true,
       }
     case 'wealthbox':

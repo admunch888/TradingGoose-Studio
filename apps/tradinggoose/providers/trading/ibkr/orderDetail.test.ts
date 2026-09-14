@@ -1,9 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   findIbkrOrderById,
+  ibkrOrderDetailRequest,
   normalizeIbkrOrderDetail,
   resolveIbkrOrderDetailProviderOrderId,
 } from '@/providers/trading/ibkr/orderDetail'
+import { ensureIbkrSession } from '@/providers/trading/ibkr/session'
+import { fetchBrokerJson, TradingBrokerRequestError } from '@/providers/trading/portfolio-utils'
+
+vi.mock('@/providers/trading/portfolio-utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/providers/trading/portfolio-utils')>()
+  return { ...actual, fetchBrokerJson: vi.fn() }
+})
+
+vi.mock('@/providers/trading/ibkr/session', () => ({
+  ensureIbkrSession: vi.fn(async () => undefined),
+}))
 
 const historyRecord: any = {
   id: 'app-order-1',
@@ -25,6 +37,16 @@ describe('resolveIbkrOrderDetailProviderOrderId', () => {
   it('resolves from response orderId', () => {
     expect(resolveIbkrOrderDetailProviderOrderId(historyRecord)).toBe('12345')
   })
+
+  it('resolves from the accepted ticket array stored as the raw order', () => {
+    expect(
+      resolveIbkrOrderDetailProviderOrderId({
+        ...historyRecord,
+        response: {},
+        normalizedOrder: { raw: [{ order_id: '777' }] },
+      })
+    ).toBe('777')
+  })
 })
 
 describe('findIbkrOrderById', () => {
@@ -38,6 +60,18 @@ describe('findIbkrOrderById', () => {
 
     const found = findIbkrOrderById(orders, '12345')
     expect(found?.order_id).toBe(12345)
+  })
+
+  it('finds a live order row, which carries orderId rather than order_id', () => {
+    const orders = {
+      orders: [
+        { orderId: 999, order_ref: 'other' },
+        { orderId: 12345, order_ref: 'tg-client-1' },
+      ],
+      snapshot: true,
+    }
+
+    expect(findIbkrOrderById(orders, '12345')?.orderId).toBe(12345)
   })
 
   it('finds an order by client order ref when ids do not match', () => {
@@ -107,5 +141,117 @@ describe('normalizeIbkrOrderDetail', () => {
     })
 
     expect(detail.remainingQuantity).toBe(6)
+  })
+
+  it('normalizes the single-order status response', () => {
+    const detail = normalizeIbkrOrderDetail('app-order-1', '12345', historyRecord, {
+      order_id: 12345,
+      symbol: 'AAPL',
+      side: 'BUY',
+      order_type: 'LIMIT',
+      tif: 'DAY',
+      total_size: '10.0',
+      cum_fill: '4.0',
+      size: '6.0',
+      average_price: '249.50',
+      order_status: 'Submitted',
+      order_time: '260301143000',
+    })
+
+    expect(detail).toMatchObject({
+      symbol: 'AAPL',
+      status: 'Submitted',
+      orderType: 'LIMIT',
+      quantity: 10,
+      filledQuantity: 4,
+      remainingQuantity: 6,
+      averageFillPrice: 249.5,
+      submittedAt: '2026-03-01T14:30:00.000Z',
+    })
+  })
+
+  it('normalizes a live order row', () => {
+    const detail = normalizeIbkrOrderDetail('app-order-1', '12345', historyRecord, {
+      orderId: 12345,
+      order_ref: 'tg-client-1',
+      ticker: 'AAPL',
+      side: 'SELL',
+      status: 'PreSubmitted',
+      orderType: 'Limit',
+      timeInForce: 'GTC',
+      totalSize: '10.0',
+      filledQuantity: '0.0',
+      remainingQuantity: '10.0',
+      price: '251',
+      avgPrice: '',
+      lastExecutionTime_r: 1772375400000,
+    })
+
+    expect(detail).toMatchObject({
+      clientOrderId: 'tg-client-1',
+      status: 'PreSubmitted',
+      timeInForce: 'GTC',
+      quantity: 10,
+      filledQuantity: 0,
+      remainingQuantity: 10,
+      limitPrice: 251,
+      averageFillPrice: null,
+      updatedAt: new Date(1772375400000).toISOString(),
+    })
+  })
+})
+
+describe('ibkrOrderDetailRequest', () => {
+  const params = { orderId: 'app-order-1', accessToken: 'test-token' }
+  const urls = () => vi.mocked(fetchBrokerJson).mock.calls.map(([args]) => args.url)
+
+  beforeEach(() => {
+    vi.mocked(fetchBrokerJson).mockReset()
+    vi.mocked(ensureIbkrSession).mockClear()
+  })
+
+  it('reads the single-order status without needing an account id', async () => {
+    vi.mocked(fetchBrokerJson).mockResolvedValueOnce({
+      order_id: 12345,
+      order_status: 'Filled',
+      total_size: '10.0',
+      cum_fill: '10.0',
+    } as never)
+
+    const result = await ibkrOrderDetailRequest(historyRecord, params)
+
+    expect(ensureIbkrSession).toHaveBeenCalledWith({ accessToken: 'test-token' })
+    expect(urls()).toEqual(['http://127.0.0.1:5000/v1/api/iserver/account/order/status/12345'])
+    expect(result.orderDetail).toMatchObject({ status: 'Filled', filledQuantity: 10 })
+  })
+
+  it('falls back to the live order list when the status endpoint cannot report the order', async () => {
+    vi.mocked(fetchBrokerJson)
+      .mockRejectedValueOnce(
+        new TradingBrokerRequestError({
+          message: 'Broker request failed with status 503',
+          providerId: 'ibkr',
+          status: 503,
+          url: 'status',
+        })
+      )
+      .mockResolvedValueOnce({
+        orders: [{ orderId: 555, order_ref: 'tg-client-1', status: 'Submitted' }],
+      } as never)
+
+    const result = await ibkrOrderDetailRequest(historyRecord, params)
+
+    expect(urls()[1]).toBe('http://127.0.0.1:5000/v1/api/iserver/account/orders')
+    expect(result.orderDetail).toMatchObject({ status: 'Submitted' })
+  })
+
+  it('explains that IBKR only reports the current session when the order is gone', async () => {
+    vi.mocked(fetchBrokerJson)
+      .mockResolvedValueOnce({} as never)
+      .mockResolvedValueOnce({ orders: [] } as never)
+
+    await expect(ibkrOrderDetailRequest(historyRecord, params)).rejects.toThrow(
+      'current brokerage session'
+    )
   })
 })

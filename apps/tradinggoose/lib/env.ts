@@ -114,6 +114,8 @@ function safeCreateEnv() {
     IBKR_MARKET_RETRY_BASE_MS: z.number().int().positive().optional(),          // First backoff before jitter (default 500)
     IBKR_MARKET_RETRY_MAX_MS: z.number().int().positive().optional(),           // Hard cap on a single backoff (default 8000)
     IBKR_MARKET_RETRY_BUDGET_MS: z.number().int().positive().optional(),        // Total wall-clock budget per paced call (default 20000)
+    IBKR_GATEWAY_ALLOWED_EMAILS: z.string().optional(),                         // Users allowed to connect IBKR through the Client Portal Gateway, comma-separated; "*" for all (default: none)
+    IBKR_ORDER_CONFIRM_MESSAGE_IDS: z.string().optional(),                      // Order warning ids confirmed automatically, comma-separated; "*" for all (default o10151,o10152,o10288,o10331)
 
     // Cloud Storage - AWS S3
     STORAGE_PROVIDER: z.enum(['local', 's3', 'azure', 'vercel']).optional(),                  // Explicit storage provider override

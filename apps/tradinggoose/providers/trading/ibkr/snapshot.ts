@@ -11,29 +11,33 @@ import {
 } from '@/providers/trading/ibkr/positions'
 import { buildPortfolioDetail } from '@/providers/trading/portfolio-detail'
 import type { PortfolioDetail } from '@/providers/trading/portfolio-identity'
-import { fetchBrokerJson, toFiniteNumber } from '@/providers/trading/portfolio-utils'
+import { fetchBrokerJson } from '@/providers/trading/portfolio-utils'
 import type { TradingPortfolioAccountContext } from '@/providers/trading/types'
 
-interface IbkrSummaryRow {
-  key?: string
-  value?: string | number | null
-}
+/**
+ * /portfolio/{accountId}/summary is an object keyed by field name, each value
+ * `{amount, currency, isNull, value, ...}`; numeric fields carry `amount`.
+ */
+export const normalizeIbkrSnapshotAccountSummary = (summary: unknown) => {
+  const record =
+    summary && typeof summary === 'object' && !Array.isArray(summary)
+      ? (summary as Record<string, any>)
+      : {}
 
-export const normalizeIbkrSnapshotAccountSummary = (rows: unknown) => {
-  const list = Array.isArray(rows) ? rows : []
-  const values = new Map<string, number | undefined>()
-
-  for (const row of list) {
-    const record = row as IbkrSummaryRow
-    const key = typeof record?.key === 'string' ? record.key : undefined
-    if (!key) continue
-    values.set(key, toFiniteNumber(record?.value))
+  const amount = (key: string): number | undefined => {
+    const entry = record[key]
+    if (entry === null || entry === undefined || entry?.isNull === true) return undefined
+    const raw = typeof entry === 'object' ? entry.amount : entry
+    if (raw === null || raw === undefined || raw === '') return undefined
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : undefined
   }
 
-  const totalCashValue = values.get('totalcashvalue') ?? 0
-  const equity = values.get('equitywithloan') ?? values.get('netliquidation') ?? 0
-  const totalPortfolioValue = values.get('netliquidation') ?? equity ?? 0
-  const buyingPower = values.get('buyingpower') ?? values.get('cashbalance') ?? 0
+  const totalCashValue = amount('totalcashvalue') ?? 0
+  const netLiquidation = amount('netliquidation')
+  const equity = amount('equitywithloanvalue') ?? netLiquidation ?? 0
+  const totalPortfolioValue = netLiquidation ?? equity
+  const buyingPower = amount('buyingpower') ?? amount('availablefunds') ?? 0
 
   return {
     totalCashValue,
@@ -48,16 +52,17 @@ export async function getIbkrTradingAccountSnapshot(
 ): Promise<PortfolioDetail> {
   const headers = buildIbkrAuthHeaders({ accessToken: context.accessToken })
 
-  const [accountIdentity, summaryRows, positions] = await Promise.all([
-    getIbkrTradingAccounts(context).then((identities) => {
-      const match =
-        identities.find((identity) => identity.accountId === context.accountId) ?? identities[0]
-      if (!match) {
-        throw new Error('IBKR account not found for connected session')
-      }
-      return match
-    }),
-    fetchBrokerJson<IbkrSummaryRow[]>({
+  // IBKR requires /portfolio/accounts before any /portfolio/{accountId}/* call,
+  // so the account list is read first rather than alongside summary and positions.
+  const identities = await getIbkrTradingAccounts(context)
+  const accountIdentity =
+    identities.find((identity) => identity.accountId === context.accountId) ?? identities[0]
+  if (!accountIdentity) {
+    throw new Error('IBKR account not found for connected session')
+  }
+
+  const [summary, positions] = await Promise.all([
+    fetchBrokerJson<unknown>({
       providerId: context.providerId,
       url: buildIbkrAccountUrl(context.accountId, '/summary'),
       init: { method: 'GET', headers },
@@ -66,7 +71,7 @@ export async function getIbkrTradingAccountSnapshot(
   ])
 
   const account = normalizeIbkrTradingAccount(accountIdentity, context)
-  const summaryTotals = normalizeIbkrSnapshotAccountSummary(summaryRows)
+  const summaryTotals = normalizeIbkrSnapshotAccountSummary(summary)
   const totalUnrealizedPnl = sumIbkrPositionUnrealizedPnl(positions)
   const totalHoldingsValue = summaryTotals.totalPortfolioValue - summaryTotals.totalCashValue
 
