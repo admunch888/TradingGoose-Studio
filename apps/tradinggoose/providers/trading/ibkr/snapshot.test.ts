@@ -152,4 +152,54 @@ describe('getIbkrTradingAccountSnapshot', () => {
       }),
     })
   })
+
+  it('values futures holdings at their market value, not net liquidation minus cash', async () => {
+    vi.mocked(fetchBrokerJson).mockImplementation(async ({ url }: { url: string }) => {
+      if (url.endsWith('/portfolio/accounts')) return [portfolioAccount] as never
+      if (url.endsWith('/summary')) {
+        return {
+          totalcashvalue: summaryField(112346),
+          netliquidation: summaryField(112353.73),
+          buyingpower: summaryField(400000),
+        } as never
+      }
+      if (url.endsWith('/positions/0')) {
+        return [
+          {
+            ticker: 'MES',
+            assetClass: 'FUT',
+            listingExchange: 'CME',
+            expiry: '20261218',
+            position: 2,
+            mktValue: 77003,
+            unrealizedPnl: -51,
+            multiplier: 5,
+          },
+        ] as never
+      }
+      return [] as never
+    })
+
+    const detail = await getIbkrTradingAccountSnapshot(context)
+
+    expect(detail.summary.totalHoldingsValue).toBe(77003)
+    expect(detail.summary.totalUnrealizedPnl).toBe(-51)
+  })
+
+  it('falls back to net liquidation minus cash when no position reports a value', async () => {
+    vi.mocked(fetchBrokerJson).mockImplementation(async ({ url }: { url: string }) => {
+      if (url.endsWith('/portfolio/accounts')) return [portfolioAccount] as never
+      if (url.endsWith('/summary')) {
+        return {
+          totalcashvalue: summaryField(2500),
+          netliquidation: summaryField(12500),
+        } as never
+      }
+      return [] as never
+    })
+
+    const detail = await getIbkrTradingAccountSnapshot(context)
+
+    expect(detail.summary.totalHoldingsValue).toBe(10000)
+  })
 })

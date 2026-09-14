@@ -7,6 +7,7 @@ import { buildIbkrAccountUrl } from '@/providers/trading/ibkr/client'
 import {
   getIbkrTradingPositions,
   IBKR_DEFAULT_BASE_CURRENCY,
+  sumIbkrPositionMarketValue,
   sumIbkrPositionUnrealizedPnl,
 } from '@/providers/trading/ibkr/positions'
 import { buildPortfolioDetail } from '@/providers/trading/portfolio-detail'
@@ -73,7 +74,9 @@ export async function getIbkrTradingAccountSnapshot(
   const account = normalizeIbkrTradingAccount(accountIdentity, context)
   const summaryTotals = normalizeIbkrSnapshotAccountSummary(summary)
   const totalUnrealizedPnl = sumIbkrPositionUnrealizedPnl(positions)
-  const totalHoldingsValue = summaryTotals.totalPortfolioValue - summaryTotals.totalCashValue
+  const totalHoldingsValue =
+    sumIbkrPositionMarketValue(positions) ??
+    summaryTotals.totalPortfolioValue - summaryTotals.totalCashValue
 
   return buildPortfolioDetail({
     identity: {
