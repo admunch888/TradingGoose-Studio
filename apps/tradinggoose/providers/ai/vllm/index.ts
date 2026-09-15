@@ -21,7 +21,11 @@ import {
   sumToolCosts,
   trackForcedToolUsage,
 } from '@/providers/ai/utils'
-import { createReadableStreamFromVLLMStream } from '@/providers/ai/vllm/utils'
+import {
+  createReadableStreamFromVLLMStream,
+  summarizeVllmMessages,
+  withUserMessage,
+} from '@/providers/ai/vllm/utils'
 import { useProvidersStore } from '@/stores/providers/store'
 import { executeTool } from '@/tools'
 
@@ -105,24 +109,34 @@ export const vllmProvider: ProviderConfig = {
       baseURL: `${baseUrl}/v1`,
     })
 
-    const allMessages: Message[] = []
+    const builtMessages: Message[] = []
 
     if (request.systemPrompt) {
-      allMessages.push({
+      builtMessages.push({
         role: 'system',
         content: request.systemPrompt,
       })
     }
 
     if (request.context) {
-      allMessages.push({
+      builtMessages.push({
         role: 'user',
         content: request.context,
       })
     }
 
     if (request.messages) {
-      allMessages.push(...request.messages)
+      builtMessages.push(...request.messages)
+    }
+
+    // See withUserMessage: a request with no user turn is refused by Qwen-style
+    // chat templates before the model runs.
+    const allMessages = withUserMessage(builtMessages)
+    if (allMessages !== builtMessages) {
+      logger.warn('vLLM request had no user message; added one for the chat template', {
+        model: request.model,
+        ...summarizeVllmMessages(builtMessages),
+      })
     }
 
     const tools = request.tools?.length
@@ -649,10 +663,22 @@ export const vllmProvider: ProviderConfig = {
         }
       }
 
+      // A refusal often has no body (SGLang answers chat template errors with an
+      // empty 400), so record the status and what was sent - its shape, not its
+      // content - to make the refusal diagnosable.
+      const status =
+        error && typeof error === 'object' && 'status' in error
+          ? (error as { status?: unknown }).status
+          : undefined
       logger.error('Error in vLLM request:', {
         error: errorMessage,
         errorType,
         errorCode,
+        status,
+        model: payload.model,
+        hasTools: !!payload.tools,
+        hasResponseFormat: !!payload.response_format,
+        ...summarizeVllmMessages(allMessages),
         duration: totalDuration,
       })
 

@@ -18,6 +18,14 @@ export async function getApiKey(
     return 'empty'
   }
 
+  // vLLM (the self-hosted OpenAI-compatible service) authenticates with the key
+  // saved on that service in Admin > Services, which the provider applies when
+  // the request carries none. Requiring a key here rejected every Agent block
+  // using a local model unless a placeholder was typed into the block.
+  if (provider === 'vllm' || model.startsWith('vllm/')) {
+    return userProvidedKey || ''
+  }
+
   const isOpenAIModel = provider === 'openai'
   const isClaudeModel = provider === 'anthropic'
 
