@@ -24,8 +24,8 @@ import { normalizeFunctionCallArguments } from '@/lib/copilot/function-call-args
 import { handleLocalCopilotChat } from '@/lib/copilot/local-runtime/chat-handler'
 import { isCopilotLocalRuntimeModel as isLocalCopilotModel } from '@/lib/copilot/local-runtime/runtime-models'
 import {
+  getReviewItemIdsReplacedByTranscriptRewrite,
   isLocalWorkingItem,
-  rebaseLocalWorkingRows,
 } from '@/lib/copilot/local-runtime/working-rows'
 import {
   mapSessionToApiResponse,
@@ -213,21 +213,27 @@ async function persistChatMessages(
         params.latestTurnStatus ?? 'completed'
       )
 
-      // The local Copilot's working history shares this table; replacing the
-      // transcript must not delete it (see rebaseLocalWorkingRows).
-      const localWorkingRows = rebaseLocalWorkingRows(
-        (
-          await tx
-            .select()
-            .from(copilotReviewItems)
-            .where(eq(copilotReviewItems.sessionId, params.reviewSessionId))
-            .orderBy(asc(copilotReviewItems.sequence))
-        ).filter(isLocalWorkingItem)
+      // The local Copilot's working history shares this table and is saved
+      // while this runs, so only the transcript is replaced (see
+      // getReviewItemIdsReplacedByTranscriptRewrite).
+      const replacedItemIds = getReviewItemIdsReplacedByTranscriptRewrite(
+        await tx
+          .select()
+          .from(copilotReviewItems)
+          .where(eq(copilotReviewItems.sessionId, params.reviewSessionId))
+          .orderBy(asc(copilotReviewItems.sequence))
       )
 
-      await tx
-        .delete(copilotReviewItems)
-        .where(eq(copilotReviewItems.sessionId, params.reviewSessionId))
+      if (replacedItemIds.length > 0) {
+        await tx
+          .delete(copilotReviewItems)
+          .where(
+            and(
+              eq(copilotReviewItems.sessionId, params.reviewSessionId),
+              inArray(copilotReviewItems.id, replacedItemIds)
+            )
+          )
+      }
       await tx
         .delete(copilotReviewTurns)
         .where(eq(copilotReviewTurns.sessionId, params.reviewSessionId))
@@ -238,10 +244,6 @@ async function persistChatMessages(
 
       if (nextHistory.items.length > 0) {
         await tx.insert(copilotReviewItems).values(nextHistory.items)
-      }
-
-      if (localWorkingRows.length > 0) {
-        await tx.insert(copilotReviewItems).values(localWorkingRows)
       }
 
       await tx
@@ -1579,6 +1581,10 @@ export async function GET(req: NextRequest) {
       ])
 
       for (const msg of allMessages) {
+        // The local Copilot's working rows are not chat messages. Listed here,
+        // the client sent them back on its next save as transcript items, which
+        // duplicated them (`copilot_review_items_session_item_unique`).
+        if (isLocalWorkingItem(msg)) continue
         const list = messagesBySession.get(msg.sessionId) ?? []
         list.push(mapReviewItemToApi(msg))
         messagesBySession.set(msg.sessionId, list)
