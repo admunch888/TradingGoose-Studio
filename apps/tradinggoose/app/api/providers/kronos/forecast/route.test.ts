@@ -449,6 +449,100 @@ describe('kronos forecast route', () => {
       expect(forecastTimestamps()).toEqual(['2026-01-10T00:00:00.000Z', '2026-01-11T00:00:00.000Z'])
     })
 
+    describe('a CME future takes its calendar from the series sessions', () => {
+      const MINUTE_MS = 60_000
+
+      // Sun 18:00 ET -> Mon 17:00 ET and so on, as the market-hours API returns them.
+      const globexSessions = [
+        { start: '2026-01-04T23:00:00.000Z', end: '2026-01-05T22:00:00.000Z' },
+        { start: '2026-01-05T23:00:00.000Z', end: '2026-01-06T22:00:00.000Z' },
+        { start: '2026-01-06T23:00:00.000Z', end: '2026-01-07T22:00:00.000Z' },
+        { start: '2026-01-07T23:00:00.000Z', end: '2026-01-08T22:00:00.000Z' },
+        { start: '2026-01-08T23:00:00.000Z', end: '2026-01-09T22:00:00.000Z' },
+      ]
+
+      /** 15-minute bars across every session, which is the MES history shape. */
+      const globexBars = () => {
+        const bars: number[] = []
+        for (const session of globexSessions) {
+          const end = Date.parse(session.end)
+          for (let ms = Date.parse(session.start); ms < end; ms += 15 * MINUTE_MS) bars.push(ms)
+        }
+        return bars
+      }
+
+      const seriesUpTo = (lastBarIso: string) => {
+        const last = Date.parse(lastBarIso)
+        const bars = globexBars().filter((ms) => ms <= last)
+        return { ...buildSeriesAt(bars.slice(-480)), marketSessions: globexSessions }
+      }
+
+      const forecastFrom = async (lastBarIso: string, horizonBars: number) => {
+        const response = await POST(
+          buildRequest(
+            buildBlockPayload({
+              marketSeries: seriesUpTo(lastBarIso),
+              interval: '15m',
+              horizonBars,
+            })
+          )
+        )
+        expect(response.status).toBe(200)
+        return forecastTimestamps()
+      }
+
+      it('steps over the 17:00-18:00 ET break instead of forecasting inside it', async () => {
+        // Last bar Tue 16:45 ET. Inferring the calendar from the bars gives a
+        // session of 00:00-23:45, so the next three bars landed at 17:00, 17:15
+        // and 17:30 - an hour the exchange is shut.
+        expect(await forecastFrom('2026-01-06T21:45:00.000Z', 3)).toEqual([
+          '2026-01-06T23:00:00.000Z', // Tue 18:00 ET
+          '2026-01-06T23:15:00.000Z',
+          '2026-01-06T23:30:00.000Z',
+        ])
+      })
+
+      it('jumps the weekend from Friday 16:45 to Sunday 18:00', async () => {
+        // The Sunday-evening bars in the history used to read as "trades
+        // weekends", so these three landed on Saturday morning.
+        expect(await forecastFrom('2026-01-09T21:45:00.000Z', 3)).toEqual([
+          '2026-01-11T23:00:00.000Z', // Sun 18:00 ET
+          '2026-01-11T23:15:00.000Z',
+          '2026-01-11T23:30:00.000Z',
+        ])
+      })
+
+      it('runs straight through midnight inside a session', async () => {
+        expect(await forecastFrom('2026-01-06T04:45:00.000Z', 2)).toEqual([
+          '2026-01-06T05:00:00.000Z', // Tue 00:00 ET
+          '2026-01-06T05:15:00.000Z',
+        ])
+      })
+    })
+
+    it('keeps inferring the calendar when the series carries no sessions', async () => {
+      // Every provider that does not resolve market hours still works exactly as
+      // before: two regular sessions of 5m bars, rolling to the next weekday open.
+      const timestamps: number[] = []
+      for (const day of ['2026-01-08', '2026-01-09']) {
+        const open = Date.parse(`${day}T14:30:00.000Z`)
+        for (let bar = 0; bar < 78; bar++) timestamps.push(open + bar * INTERVAL_MS)
+      }
+
+      const response = await POST(
+        buildRequest(
+          buildBlockPayload({
+            marketSeries: { ...buildSeriesAt(timestamps), marketSessions: [] },
+            interval: '5m',
+            horizonBars: 1,
+          })
+        )
+      )
+
+      expect(response.status).toBe(200)
+      expect(forecastTimestamps()).toEqual(['2026-01-12T14:30:00.000Z'])
+    })
+
     it('rejects an unknown timezone with 400 (not 502)', async () => {
       const response = await POST(
         buildRequest(buildBlockPayload({ timezone: 'Mars/Olympus_Mons' }))
