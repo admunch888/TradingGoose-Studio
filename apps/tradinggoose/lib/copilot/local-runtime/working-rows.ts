@@ -56,19 +56,30 @@ export function isLocalWorkingItem(row: {
 }
 
 /**
- * Working rows to re-insert after the transcript was replaced: in their saved
- * order, numbered from `LOCAL_WORKING_SEQUENCE_BASE`, and detached from the
- * turns the replacement deleted.
+ * Ids of the rows a transcript rewrite replaces: every transcript row, and
+ * working rows saved before working rows had their own sequence range (those
+ * sit among transcript sequences and would collide with the rewritten ones).
+ * Every other working row is left in place.
  *
- * The history routes replace a session's items by deleting all of them. That
- * removed the working history mid-turn, so a turn resumed after `plan` reached
- * the model with no user message and a result detached from its call, and the
- * model server refused it.
+ * The history routes used to delete a session's items outright, which removed
+ * the working history mid-turn. Deleting everything and inserting the working
+ * rows again then raced the local runtime saving its next row: the insert
+ * failed (`Failed query: insert into "copilot_review_items"`), rolled back the
+ * transcript save, and Copilot stopped mid-task.
  */
-export function rebaseLocalWorkingRows<T extends { sequence: number; turnId?: string | null }>(
-  rows: T[]
-): T[] {
-  return [...rows]
-    .sort((left, right) => left.sequence - right.sequence)
-    .map((row, index) => ({ ...row, sequence: LOCAL_WORKING_SEQUENCE_BASE + index, turnId: null }))
+export function getReviewItemIdsReplacedByTranscriptRewrite(
+  items: Array<{
+    id: string
+    itemId?: string | null
+    content?: string | null
+    sequence?: number | null
+  }>
+): string[] {
+  return items
+    .filter(
+      (item) =>
+        !isLocalWorkingItem(item) ||
+        (typeof item.sequence === 'number' && item.sequence < LOCAL_WORKING_SEQUENCE_BASE)
+    )
+    .map((item) => item.id)
 }

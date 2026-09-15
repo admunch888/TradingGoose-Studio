@@ -93,6 +93,7 @@ describe('Copilot Chat Update Messages', () => {
       and: vi.fn((...conditions: unknown[]) => ({ conditions, type: 'and' })),
       asc: vi.fn((field: unknown) => ({ field, type: 'asc' })),
       eq: vi.fn((field: unknown, value: unknown) => ({ field, value, type: 'eq' })),
+      inArray: vi.fn((field: unknown, values: unknown[]) => ({ field, values, type: 'inArray' })),
     }))
 
     vi.doMock('@/lib/copilot/auth', () => ({
@@ -299,8 +300,10 @@ describe('Copilot Chat Update Messages', () => {
       workspaceId: 'workspace-1',
     })
     const transcriptRow = {
+      id: 'row-transcript',
       itemId: 'message-1',
       sessionId: 'review-session-1',
+      sequence: 0,
       messageRole: 'user',
       content: 'Build the MES workflow',
       timestamp: '2026-03-30T12:00:00.000Z',
@@ -310,14 +313,15 @@ describe('Copilot Chat Update Messages', () => {
       itemId: 'local_user_message-1',
       sessionId: 'review-session-1',
       turnId: null,
-      sequence: 5,
+      sequence: 1_000_000_000,
       kind: 'message',
       messageRole: 'user',
       content: '[[local-working]]{"text":"Build the MES workflow","role":"user"}',
       timestamp: '2026-03-30T12:00:00.000Z',
     }
-    const workingCallRow = {
-      id: 'row-calls',
+    // Saved before working rows had their own range, among transcript sequences.
+    const legacyWorkingRow = {
+      id: 'row-legacy',
       itemId: 'local_tool_calls_1',
       sessionId: 'review-session-1',
       turnId: null,
@@ -328,14 +332,21 @@ describe('Copilot Chat Update Messages', () => {
       timestamp: '2026-03-30T12:00:01.000Z',
     }
     // The transcript read (message rows, including the working user row), then
-    // the read of every row the rewrite replaces.
+    // the read of every row in the session.
     selectOrderBy
       .mockResolvedValueOnce([transcriptRow, workingUserRow])
-      .mockResolvedValueOnce([transcriptRow, workingUserRow, workingCallRow])
+      .mockResolvedValueOnce([transcriptRow, workingUserRow, legacyWorkingRow])
 
     const request = createMockRequest('POST', {
       reviewSessionId: 'review-session-1',
       messages: [
+        // A working row the client loaded as a message and sends back.
+        {
+          id: 'local_user_message-1',
+          role: 'user',
+          content: '[[local-working]]{"text":"Build the MES workflow","role":"user"}',
+          timestamp: '2026-03-30T12:00:00.000Z',
+        },
         {
           id: 'message-1',
           role: 'user',
@@ -356,23 +367,20 @@ describe('Copilot Chat Update Messages', () => {
 
     expect(response.status).toBe(200)
     expect(deleteWhere).toHaveBeenCalledTimes(2)
-    expect(insertValues).toHaveBeenCalledTimes(3)
+    // Only the transcript row and the pre-range working row are deleted; the
+    // current working row stays and is never inserted again.
+    expect(deleteWhere.mock.calls[0]?.[0]).toEqual({
+      type: 'and',
+      conditions: [
+        expect.objectContaining({ type: 'eq', value: 'review-session-1' }),
+        expect.objectContaining({ type: 'inArray', values: ['row-transcript', 'row-legacy'] }),
+      ],
+    })
+    expect(insertValues).toHaveBeenCalledTimes(2)
     // The transcript holds only the conversation, not the working user row.
     expect(insertValues.mock.calls[1]?.[0]).toEqual([
       expect.objectContaining({ itemId: 'message-1' }),
       expect.objectContaining({ itemId: 'message-2' }),
-    ])
-    expect(insertValues.mock.calls[2]?.[0]).toEqual([
-      expect.objectContaining({
-        itemId: 'local_user_message-1',
-        sequence: 1_000_000_000,
-        turnId: null,
-      }),
-      expect.objectContaining({
-        itemId: 'local_tool_calls_1',
-        sequence: 1_000_000_001,
-        turnId: null,
-      }),
     ])
   })
 

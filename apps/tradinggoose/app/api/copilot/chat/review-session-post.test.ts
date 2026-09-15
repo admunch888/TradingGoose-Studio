@@ -820,14 +820,19 @@ describe('Copilot Chat POST Generic Sessions', () => {
     mockLoadReviewSessionForUser.mockResolvedValue(
       buildExistingReviewSession({ conversationId: 'conversation-1' })
     )
-    txSelectOrderBy.mockResolvedValueOnce([
-      {
-        itemId: 'user-message-duplicate',
-        messageRole: 'user',
-        content: 'Please update the summary',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      },
-    ])
+    const persistedUserRow = {
+      itemId: 'user-message-duplicate',
+      messageRole: 'user',
+      content: 'Please update the summary',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    }
+    // The transcript read, then the read of the session's rows the rewrite
+    // replaces (those carry the row id the delete targets).
+    txSelectOrderBy
+      .mockResolvedValueOnce([persistedUserRow])
+      .mockResolvedValueOnce([
+        { ...persistedUserRow, id: 'row-user-message-duplicate', sequence: 0 },
+      ])
 
     const request = createMockRequest('POST', {
       message: 'Please update the summary',

@@ -4,7 +4,7 @@ import {
   copilotReviewSessions,
   copilotReviewTurns,
 } from '@tradinggoose/db/schema'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import {
@@ -19,8 +19,8 @@ import {
   EDIT_REPLAY_BLOCKED_MESSAGE,
 } from '@/lib/copilot/chat-replay-safety'
 import {
+  getReviewItemIdsReplacedByTranscriptRewrite,
   isLocalWorkingItem,
-  rebaseLocalWorkingRows,
 } from '@/lib/copilot/local-runtime/working-rows'
 import { loadReviewSessionForUser } from '@/lib/copilot/review-sessions/permissions'
 import {
@@ -146,7 +146,12 @@ export async function POST(req: NextRequest) {
       const currentMessages = currentItems
         .filter((item) => !isLocalWorkingItem(item))
         .map(mapReviewItemToApi)
-      const nextMessages = messages
+      // A client that loaded the local Copilot's working rows as messages sends
+      // them back; written as transcript items they duplicate the working rows
+      // (`copilot_review_items_session_item_unique`) and the save fails.
+      const nextMessages = messages.filter(
+        (message) => !isLocalWorkingItem({ itemId: message.id, content: message.content })
+      )
       persistedMessageCount = nextMessages.length
 
       if (dropsAcceptedLiveMutation(currentMessages, nextMessages)) {
@@ -159,19 +164,27 @@ export async function POST(req: NextRequest) {
         return
       }
 
-      // The local Copilot's working history shares this table; replacing the
-      // transcript must not delete it (see rebaseLocalWorkingRows).
-      const localWorkingRows = rebaseLocalWorkingRows(
-        (
-          await tx
-            .select()
-            .from(copilotReviewItems)
-            .where(eq(copilotReviewItems.sessionId, reviewSessionId))
-            .orderBy(asc(copilotReviewItems.sequence))
-        ).filter(isLocalWorkingItem)
+      // The local Copilot's working history shares this table and is saved
+      // while this runs, so only the transcript is replaced (see
+      // getReviewItemIdsReplacedByTranscriptRewrite).
+      const replacedItemIds = getReviewItemIdsReplacedByTranscriptRewrite(
+        await tx
+          .select()
+          .from(copilotReviewItems)
+          .where(eq(copilotReviewItems.sessionId, reviewSessionId))
+          .orderBy(asc(copilotReviewItems.sequence))
       )
 
-      await tx.delete(copilotReviewItems).where(eq(copilotReviewItems.sessionId, reviewSessionId))
+      if (replacedItemIds.length > 0) {
+        await tx
+          .delete(copilotReviewItems)
+          .where(
+            and(
+              eq(copilotReviewItems.sessionId, reviewSessionId),
+              inArray(copilotReviewItems.id, replacedItemIds)
+            )
+          )
+      }
       await tx.delete(copilotReviewTurns).where(eq(copilotReviewTurns.sessionId, reviewSessionId))
 
       const nextHistory = deriveReviewTurnsAndItems(
@@ -186,10 +199,6 @@ export async function POST(req: NextRequest) {
 
       if (nextHistory.items.length > 0) {
         await tx.insert(copilotReviewItems).values(nextHistory.items)
-      }
-
-      if (localWorkingRows.length > 0) {
-        await tx.insert(copilotReviewItems).values(localWorkingRows)
       }
 
       await tx

@@ -400,4 +400,49 @@ describe('Copilot Chat Review Session GET', () => {
 
     expect(mockSelect).toHaveBeenCalledTimes(3)
   })
+
+  it('leaves the local Copilot working rows out of listed chat messages', async () => {
+    mockSelect.mockReset()
+    mockSelect
+      .mockReturnValueOnce({ from: mockFromSessions })
+      .mockReturnValueOnce({ from: mockFromItems })
+      .mockReturnValueOnce({ from: mockFromTurns })
+    mockOrderByItems.mockResolvedValueOnce([
+      {
+        itemId: 'workflow-message-1',
+        sessionId: 'review-session-2',
+        messageRole: 'user',
+        content: 'Please review this workflow',
+        timestamp: '2026-01-03T00:00:00.000Z',
+      },
+      // Listed as a message, the client sent it back on its next save and the
+      // transcript insert duplicated it.
+      {
+        itemId: 'local_user_workflow-message-1',
+        sessionId: 'review-session-2',
+        messageRole: 'user',
+        content: '[[local-working]]{"text":"Please review this workflow","role":"user"}',
+        timestamp: '2026-01-03T00:00:00.000Z',
+      },
+      {
+        itemId: 'workflow-message-2',
+        sessionId: 'review-session-2',
+        messageRole: 'assistant',
+        content: 'Workflow looks good',
+        timestamp: '2026-01-03T00:01:00.000Z',
+      },
+    ])
+
+    const response = await GET(
+      new NextRequest('http://localhost:3000/api/copilot/chat?workspaceId=workspace-1')
+    )
+
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.chats[0].messages.map((message: { id: string }) => message.id)).toEqual([
+      'workflow-message-1',
+      'workflow-message-2',
+    ])
+    expect(payload.chats[0].messageCount).toBe(2)
+  })
 })
