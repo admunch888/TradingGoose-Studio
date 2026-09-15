@@ -1,6 +1,13 @@
 import OpenAI from 'openai'
 import { describeModelServerError } from '@/lib/copilot/local-runtime/model-server-error'
 import { buildLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
+import {
+  buildRepeatedToolCallResult,
+  buildToolCallSignature,
+  countPriorToolCalls,
+  REPEATED_TOOL_CALL_LIMIT,
+  REPEATED_TOOL_CALL_STOP_LIMIT,
+} from '@/lib/copilot/local-runtime/repeated-tool-calls'
 import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
 import {
   buildLocalCopilotSamplingOptions,
@@ -223,6 +230,9 @@ export async function runLocalCopilotTurn(
   })
 
   let fullText = ''
+  // Seeded from the history so a turn resumed after a browser tool keeps the
+  // count (see repeated-tool-calls.ts).
+  const toolCallCounts = countPriorToolCalls(workingMessages)
 
   for (let iteration = 0; iteration < settings.maxToolIterations; iteration++) {
     if (ctx.signal?.aborted) {
@@ -345,8 +355,36 @@ export async function runLocalCopilotTurn(
       }
     }
 
+    let repeatedCallStop: string | null = null
+
     for (const call of orderedCalls) {
       const toolCallId = emitFunctionCallFrame(sink, call)
+
+      const signature = buildToolCallSignature(call.name, call.arguments)
+      const callCount = (toolCallCounts.get(signature) ?? 0) + 1
+      toolCallCounts.set(signature, callCount)
+
+      if (callCount > REPEATED_TOOL_CALL_LIMIT) {
+        if (callCount > REPEATED_TOOL_CALL_STOP_LIMIT) repeatedCallStop = call.name
+        logger.warn('Local copilot repeated a tool call; answering from its history', {
+          conversationId: params.conversationId,
+          toolName: call.name,
+          callCount,
+        })
+        const repeatedContent = buildRepeatedToolCallResult(call.name, callCount)
+        sink.send({
+          event: 'tool_error',
+          data: { toolCallId, success: false, error: `Repeated call to ${call.name}` },
+        })
+        const repeatedMessage: LocalWorkingMessage = {
+          role: 'tool',
+          tool_call_id: toolCallId,
+          content: repeatedContent,
+        }
+        workingMessages.push(repeatedMessage)
+        await hooks.onToolResult?.(repeatedMessage)
+        continue
+      }
 
       let payload: unknown = {}
       try {
@@ -432,6 +470,14 @@ export async function runLocalCopilotTurn(
       }
       workingMessages.push(toolMessage)
       await hooks.onToolResult?.(toolMessage)
+    }
+
+    if (repeatedCallStop) {
+      logger.warn('Local copilot kept repeating a tool call; ending the turn', {
+        conversationId: params.conversationId,
+        toolName: repeatedCallStop,
+      })
+      return { text: fullText, workingMessages, awaiting: null }
     }
   }
 
