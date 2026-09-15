@@ -950,6 +950,21 @@ function readGraphOnlyDirectExistingBlockNames(
   return names
 }
 
+/**
+ * Whether a line that failed the canonical edge match was still meant as one.
+ * Node declarations carry "[", metadata lines start with the comment prefix, and
+ * a subgraph header is its own keyword - anything else holding "-->" is an edge
+ * the author expected to be applied.
+ */
+function looksLikeEdgeLine(trimmed: string): boolean {
+  return (
+    trimmed.includes('-->') &&
+    !trimmed.startsWith(COMMENT_PREFIX) &&
+    !trimmed.startsWith('subgraph') &&
+    !trimmed.includes('[')
+  )
+}
+
 function parseVisibleEdgeLabel(
   rawLabel: string
 ): { sourceHandle: string; targetHandle: string } | null {
@@ -1168,6 +1183,15 @@ function parseVisibleWorkflowEdges(
       /^([A-Za-z0-9_-]+)\s*(?:--\s*"((?:\\"|[^"])*)"\s*)?-->\s*([A-Za-z0-9_-]+)$/
     )
     if (!edgeMatch?.[1] || !edgeMatch[3]) {
+      // A line that clearly means to be an edge but is not in canonical form used
+      // to be skipped in silence: the edit reported success and the edge simply
+      // never existed. Mermaid's pipe label ("a -->|handle| b") is the common way
+      // to land here.
+      if (looksLikeEdgeLine(trimmed)) {
+        throw new Error(
+          `Workflow graph Mermaid line "${trimmed}" is not a valid edge. Write "<source> --> <target>", or '<source> -- "<sourceHandle> -> <targetHandle>" --> <target>' when handles are needed. Mermaid pipe labels are not supported.`
+        )
+      }
       continue
     }
 
@@ -1201,6 +1225,12 @@ function parseVisibleWorkflowEdges(
     if (visibleEndpointViolation) throw new Error(visibleEndpointViolation)
 
     const parsedLabel = edgeMatch[2] ? parseVisibleEdgeLabel(edgeMatch[2]) : null
+    if (edgeMatch[2] && !parsedLabel) {
+      // Falling back to the default handle here silently rewired the edge.
+      throw new Error(
+        `Workflow graph Mermaid edge label "${edgeMatch[2]}" must be "<sourceHandle> -> <targetHandle>", both handles separated by " -> ".`
+      )
+    }
     const sourceHandle =
       parsedLabel?.sourceHandle ??
       (sourceRef.kind === 'block' && isContainerBlockType(sourceRef.blockType)
@@ -1222,7 +1252,7 @@ function parseVisibleWorkflowEdges(
     const conditionHandlePrefix = `condition-${sourceRef.blockId}-`
     if (sourceBlock?.type === 'condition' && !sourceHandle.startsWith(conditionHandlePrefix)) {
       throw new Error(
-        `Workflow graph Mermaid condition edge from "${sourceRef.blockId}" must use canonical sourceHandle "${conditionHandlePrefix}<branch>". Use edit_workflow_block to define condition branches before wiring them.`
+        `Workflow graph Mermaid condition edge from "${sourceRef.blockId}" must use canonical sourceHandle "${conditionHandlePrefix}<branch>". Draw it from the branch node the document already renders inside that block's subgraph - "<nodeId>__condition_<branch> --> <target>" - rather than from the block itself; those branch nodes cannot be declared by hand. Use edit_workflow_block first if the branch does not exist yet.`
       )
     }
 

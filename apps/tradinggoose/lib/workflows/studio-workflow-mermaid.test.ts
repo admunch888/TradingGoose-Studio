@@ -465,6 +465,63 @@ n3 --> n4
     ).toThrow('must use canonical sourceHandle "condition-gate-<branch>"')
   })
 
+  it('rejects a pipe-label edge instead of dropping it in silence', () => {
+    // What the Copilot reached for after the canonical forms were refused. The
+    // line did not match the edge pattern, so it used to be skipped: the edit
+    // reported success and the edge simply never existed.
+    expect(() =>
+      parseGraphOnlyWorkflowMermaid(
+        [
+          'flowchart TD',
+          'gate["Market Hours?<br/>id: gate<br/>type: condition"]',
+          'sink["Send Alert<br/>id: sink<br/>type: telegram"]',
+          'gate -->|condition-gate-if| sink',
+        ].join('\n'),
+        workflowState.blocks
+      )
+    ).toThrow('is not a valid edge')
+  })
+
+  it('rejects an edge label that does not carry both handles', () => {
+    expect(() =>
+      parseGraphOnlyWorkflowMermaid(
+        [
+          'flowchart TD',
+          'gate["Market Hours?<br/>id: gate<br/>type: condition"]',
+          'sink["Send Alert<br/>id: sink<br/>type: telegram"]',
+          'gate -- "condition-gate-if" --> sink',
+        ].join('\n'),
+        workflowState.blocks
+      )
+    ).toThrow('must be "<sourceHandle> -> <targetHandle>"')
+  })
+
+  it('names the branch node form when a condition edge leaves the block itself', () => {
+    expect(() =>
+      parseGraphOnlyWorkflowMermaid(
+        [
+          'flowchart TD',
+          'gate["Market Hours?<br/>id: gate<br/>type: condition"]',
+          'sink["Send Alert<br/>id: sink<br/>type: telegram"]',
+          'gate --> sink',
+        ].join('\n'),
+        workflowState.blocks
+      )
+    ).toThrow('__condition_<branch> --> <target>')
+  })
+
+  it('leaves node declarations and comments alone', () => {
+    // A name holding "-->" must not be mistaken for a malformed edge.
+    const document = [
+      'flowchart TD',
+      '%% TG_NOTE a --> b',
+      'gate["Market Hours? a --> b<br/>id: gate<br/>type: condition"]',
+      'sink["Send Alert<br/>id: sink<br/>type: telegram"]',
+    ].join('\n')
+
+    expect(() => parseGraphOnlyWorkflowMermaid(document, workflowState.blocks)).not.toThrow()
+  })
+
   it('rejects visible external edges into container internal endpoint nodes', () => {
     for (const [endpoint, message] of [
       ['n2__parallel_end', 'end node only accepts edges from blocks inside that container'],
