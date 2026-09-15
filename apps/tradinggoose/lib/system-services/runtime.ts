@@ -65,6 +65,15 @@ export const resolveOpenAIServiceConfig = createServiceResolver('openai', (confi
   rotationKeys: readRotationKeys(config),
 }))
 
+export const resolveOpenAICompatibleEmbeddingsServiceConfig = createServiceResolver(
+  'openai_compatible_embeddings',
+  (config) => ({
+    ...readApiKeyAndBaseUrlConfig(config),
+    model: asString(config.model),
+    sendDimensions: asBoolean(config.sendDimensions),
+  })
+)
+
 export const resolveAnthropicServiceConfig = createServiceResolver('anthropic', (config) => ({
   rotationKeys: readRotationKeys(config),
 }))

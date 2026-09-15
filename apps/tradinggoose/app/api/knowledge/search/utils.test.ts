@@ -6,8 +6,19 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { resolveAzureOpenAIServiceConfig, resolveOpenAIServiceConfig } = vi.hoisted(() => ({
+const {
+  resolveAzureOpenAIServiceConfig,
+  resolveOpenAICompatibleEmbeddingsServiceConfig,
+  resolveOpenAIServiceConfig,
+} = vi.hoisted(() => ({
   resolveAzureOpenAIServiceConfig: vi.fn(),
+  // No self-hosted embeddings endpoint: these tests cover Azure and OpenAI.
+  resolveOpenAICompatibleEmbeddingsServiceConfig: vi.fn(async () => ({
+    apiKey: null,
+    baseUrl: null,
+    model: null,
+    sendDimensions: false,
+  })),
   resolveOpenAIServiceConfig: vi.fn(),
 }))
 
@@ -71,6 +82,7 @@ vi.mock('@/lib/env', () => ({
 
 vi.mock('@/lib/system-services/runtime', () => ({
   resolveAzureOpenAIServiceConfig,
+  resolveOpenAICompatibleEmbeddingsServiceConfig,
   resolveOpenAIServiceConfig,
 }))
 
@@ -345,7 +357,7 @@ describe('Knowledge Search Utils', () => {
 
     it('should throw error when no API configuration provided', async () => {
       await expect(generateSearchEmbedding('test query')).rejects.toThrow(
-        'Either the OpenAI default API key or Azure OpenAI service config must be configured'
+        'Configure a self-hosted embeddings endpoint, the OpenAI default API key, or the Azure OpenAI service'
       )
     })
 
