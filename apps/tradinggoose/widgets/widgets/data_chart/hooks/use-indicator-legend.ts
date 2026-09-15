@@ -11,6 +11,7 @@ import type {
 } from 'lightweight-charts'
 import type { DataChartViewParams } from '@/widgets/widgets/data_chart/contract'
 import type { IndicatorRuntimeEntry } from '@/widgets/widgets/data_chart/types'
+import { isInternalIndicatorPlotTitle } from '@/widgets/widgets/data_chart/utils/chart-interaction'
 
 export type IndicatorPlotValue = {
   key: string
@@ -103,8 +104,10 @@ export const useIndicatorLegend = ({
       const signatureParts: string[] = []
 
       runtimeEntries.forEach((entry, indicatorId) => {
-        signatureParts.push(`${indicatorId}:count:${entry.plots.length}`)
-        const values = entry.plots.map((plot) => {
+        // PineTS drawing collections (__labels__, __lines__, ...) carry no value.
+        const plots = entry.plots.filter((plot) => !isInternalIndicatorPlotTitle(plot.title))
+        signatureParts.push(`${indicatorId}:count:${plots.length}`)
+        const values = plots.map((plot) => {
           const data = resolveSeriesData(plot.series, param)
           const value = extractValue(data)
           const displayValue =
