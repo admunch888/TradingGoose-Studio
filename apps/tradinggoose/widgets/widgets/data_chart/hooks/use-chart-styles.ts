@@ -47,7 +47,14 @@ const resolvePriceFormat = (precision?: number | null) => {
   }
 }
 
-const buildCompactPriceFormatter = (precision: number, locale?: string) => {
+/**
+ * The chart's price formatter, shared by the price axis, price labels and
+ * indicator panes. Values from a million up are abbreviated (volume panes);
+ * anything smaller is written in full. Abbreviating from a thousand turned
+ * every instrument priced in the thousands into `7.71K` on the price axis - a
+ * MES future at 7694.75 lost its points and ticks.
+ */
+export const buildCompactPriceFormatter = (precision: number, locale?: string) => {
   const formatter = new Intl.NumberFormat(locale || undefined, {
     maximumFractionDigits: precision,
     minimumFractionDigits: 0,
@@ -57,7 +64,6 @@ const buildCompactPriceFormatter = (precision: number, locale?: string) => {
     { value: 1_000_000_000_000, suffix: 'T' },
     { value: 1_000_000_000, suffix: 'B' },
     { value: 1_000_000, suffix: 'M' },
-    { value: 1_000, suffix: 'K' },
   ]
 
   return (value: number) => {
