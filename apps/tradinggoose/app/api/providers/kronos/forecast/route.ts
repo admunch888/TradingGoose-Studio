@@ -8,6 +8,14 @@ import {
   KronosError,
   KronosErrorCode,
 } from '@/lib/kronos'
+import {
+  buildWeeklyTradingSchedule,
+  createLocalTimeReader,
+  isWithinWeeklySchedule,
+  type LocalTime,
+  readSessionWindows,
+  type SessionWindow,
+} from '@/lib/kronos/trading-calendar'
 import { type ForecastRequest, ForecastRequestSchema } from '@/lib/kronos/types'
 import {
   getListingIdentitySymbol,
@@ -186,48 +194,6 @@ const DAY_MS = 86_400_000
 /** Upper bound on candidate steps, so a degenerate calendar cannot loop forever. */
 const MAX_CANDIDATE_STEPS = 200_000
 
-const WEEKDAY_INDEX: Record<string, number> = {
-  Sun: 0,
-  Mon: 1,
-  Tue: 2,
-  Wed: 3,
-  Thu: 4,
-  Fri: 5,
-  Sat: 6,
-}
-
-interface LocalTime {
-  weekday: number
-  dateKey: string
-  minuteOfDay: number
-}
-
-/** Reads an instant's wall-clock weekday, date and minute in the listing's timezone. */
-const createLocalTimeReader = (timezone: string): ((instant: number) => LocalTime) => {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    hourCycle: 'h23',
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
-  return (instant) => {
-    const parts: Record<string, string> = {}
-    for (const part of formatter.formatToParts(new Date(instant))) {
-      parts[part.type] = part.value
-    }
-    return {
-      weekday: WEEKDAY_INDEX[parts.weekday],
-      dateKey: `${parts.year}-${parts.month}-${parts.day}`,
-      minuteOfDay: Number(parts.hour) * 60 + Number(parts.minute),
-    }
-  }
-}
-
 interface TradingCalendar {
   tradesWeekends: boolean
   /** First and last bar minute-of-day seen, only when the history spans several days. */
@@ -235,10 +201,14 @@ interface TradingCalendar {
 }
 
 /**
- * Infer when the listing trades from its own history, so no exchange calendar is
- * needed: weekend bars mean a 24/7 market (crypto), and several days of bars give
- * the session's first and last bar time. A single day of bars says nothing about
- * the session, so it only contributes the weekend rule.
+ * Infer when the listing trades from its own history. Used only when the series
+ * carries no session windows: weekend bars mean a 24/7 market (crypto), and
+ * several days of bars give the session's first and last bar time. A single day
+ * of bars says nothing about the session, so it only contributes the weekend rule.
+ *
+ * This cannot see an intraday break, and reads Globex's Sunday-evening open as a
+ * market that trades weekends. A series with `marketSessions` takes the exact
+ * calendar instead - see lib/kronos/trading-calendar.ts.
  */
 const inferTradingCalendar = (
   historyMs: number[],
@@ -261,9 +231,9 @@ const inferTradingCalendar = (
  * Derive the forecast target timestamps from the last history bar.
  *
  * Kronos encodes each target's minute, hour, weekday and date, so targets have
- * to land where bars actually occur: steps skip weekends unless the history
- * trades them, intraday steps stay inside the session inferred from the history,
- * and day-or-longer steps keep the bar's wall-clock time across DST changes.
+ * to land where bars actually occur. The series' own session windows say where
+ * that is; without them the calendar is inferred from the bars, and day-or-longer
+ * steps keep the bar's wall-clock time across DST changes either way.
  *
  * Limits: exchange holidays and half days are not modelled. Month steps use UTC
  * calendar months (so 31 Jan + 1mo lands in March).
@@ -272,7 +242,8 @@ const deriveFutureTimestamps = (
   historyTimestamps: string[],
   interval: string,
   horizonBars: number,
-  timezone: string
+  timezone: string,
+  sessions: readonly SessionWindow[] = []
 ): string[] => {
   const historyMs = historyTimestamps.map((timestamp) => Date.parse(timestamp))
   const last = historyMs[historyMs.length - 1]
@@ -293,7 +264,8 @@ const deriveFutureTimestamps = (
   }
 
   const readLocalTime = createLocalTimeReader(timezone)
-  const calendar = inferTradingCalendar(historyMs, readLocalTime)
+  const schedule = buildWeeklyTradingSchedule(sessions, historyMs, readLocalTime)
+  const calendar = schedule ? null : inferTradingCalendar(historyMs, readLocalTime)
   const intraday = step.ms < DAY_MS
 
   const advance = (instant: number): number => {
@@ -308,6 +280,12 @@ const deriveFutureTimestamps = (
 
   const isTradingTime = (instant: number): boolean => {
     const time = readLocalTime(instant)
+    if (schedule) {
+      // Daily and longer steps only need the day to be open; the minute they land
+      // on is the one the history bar already used.
+      return intraday ? isWithinWeeklySchedule(schedule, time) : schedule.has(time.weekday)
+    }
+    if (!calendar) return true
     if (!calendar.tradesWeekends && (time.weekday === 0 || time.weekday === 6)) {
       return false
     }
@@ -324,7 +302,9 @@ const deriveFutureTimestamps = (
   for (let steps = 0; futureTimestamps.length < horizonBars; steps++) {
     if (steps >= MAX_CANDIDATE_STEPS) {
       throw new Error(
-        'Could not place future timestamps within the trading calendar inferred from the history'
+        schedule
+          ? 'Could not place future timestamps within the trading sessions the market series carries'
+          : 'Could not place future timestamps within the trading calendar inferred from the history'
       )
     }
     cursor = advance(cursor)
@@ -383,7 +363,8 @@ const buildForecastRequest = (requestId: string, body: ForecastRequestBody): unk
       historyTimestamps,
       body.interval,
       body.horizonBars,
-      body.timezone
+      body.timezone,
+      readSessionWindows(body.marketSeries)
     ),
     parameters: body.parameters,
   }
