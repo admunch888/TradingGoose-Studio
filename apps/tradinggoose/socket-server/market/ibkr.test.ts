@@ -121,6 +121,7 @@ describe('IbkrMarketStream', () => {
     stream.subscribe(['MESZ26'])
     await vi.advanceTimersByTimeAsync(0)
     sockets[0]?.fire('open')
+    sockets[0]?.message({ topic: 'system', success: 'paper-user', isPaper: true })
     return stream
   }
 
@@ -155,6 +156,43 @@ describe('IbkrMarketStream', () => {
       'smd+730283085+{"fields":["31","70","71","82","83","84","86","87","7741","7762"]}',
     ])
     expect(onStatus).toHaveBeenCalledWith({ state: 'connected' })
+    expect(stream.isConnected()).toBe(true)
+    stream.close()
+  })
+
+  it('subscribes only after the gateway has authenticated the socket', async () => {
+    const stream = new IbkrMarketStream({ onQuote, onStatus, onError }, runtime)
+    stream.setConid('MESZ26', 730283085)
+    stream.subscribe(['MESZ26'])
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A subscription sent on open is ignored by the gateway.
+    sockets[0].fire('open')
+    expect(sockets[0].sent).toEqual([])
+    expect(onStatus).not.toHaveBeenCalled()
+    expect(stream.isConnected()).toBe(false)
+
+    sockets[0].message({ topic: 'system', success: 'paper-user', isPaper: true })
+    sockets[0].message({ topic: 'sts', args: { authenticated: true } })
+
+    expect(sockets[0].sent).toEqual([
+      'smd+730283085+{"fields":["31","70","71","82","83","84","86","87","7741","7762"]}',
+    ])
+    expect(onStatus).toHaveBeenCalledTimes(1)
+    expect(onStatus).toHaveBeenCalledWith({ state: 'connected' })
+    stream.close()
+  })
+
+  it('subscribes again when the gateway re-authenticates the session', async () => {
+    const stream = await connectedStream()
+
+    sockets[0].message({ topic: 'sts', args: { authenticated: false } })
+    expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({ state: 'disconnected' }))
+    expect(stream.isConnected()).toBe(false)
+
+    sockets[0].message({ topic: 'sts', args: { authenticated: true } })
+
+    expect(sockets[0].sent.filter((message) => message.startsWith('smd+'))).toHaveLength(2)
     expect(stream.isConnected()).toBe(true)
     stream.close()
   })
@@ -213,6 +251,7 @@ describe('IbkrMarketStream', () => {
 
     await vi.advanceTimersByTimeAsync(1_000)
     sockets[1].fire('open')
+    sockets[1].message({ topic: 'system', success: 'paper-user', isPaper: true })
 
     expect(sockets[1].sent).toEqual([
       'smd+730283085+{"fields":["31","70","71","82","83","84","86","87","7741","7762"]}',
@@ -232,6 +271,21 @@ describe('IbkrMarketStream', () => {
     expect(onStatus).toHaveBeenCalledWith({ state: 'disconnected' })
     await vi.advanceTimersByTimeAsync(1_000)
     expect(sockets).toHaveLength(2)
+    stream.close()
+  })
+
+  it('drops a socket that opens but is never authenticated', async () => {
+    const stream = new IbkrMarketStream({ onQuote, onStatus, onError }, runtime)
+    stream.setConid('MESZ26', 730283085)
+    stream.subscribe(['MESZ26'])
+    await vi.advanceTimersByTimeAsync(0)
+    sockets[0].fire('open')
+
+    await vi.advanceTimersByTimeAsync(IBKR_STREAM_CONNECT_TIMEOUT_MS)
+
+    expect(sockets[0].closed).toBe(true)
+    expect(sockets[0].sent).toEqual([])
+    expect(onStatus).toHaveBeenCalledWith({ state: 'disconnected' })
     stream.close()
   })
 
