@@ -26,6 +26,9 @@ const logger = createLogger('IbkrMarketStream')
  * - Updates arrive as `{"topic":"smd+<conid>","conid":...,"31":"7699.50",...}`
  *   and carry only the fields that changed.
  * - A `tic` message keeps the session alive.
+ * - Subscriptions are only honoured once the gateway has authenticated the
+ *   socket: it sends `{"topic":"system","success":"<user>"}` (and `sts` with
+ *   `authenticated: true`) first.
  */
 
 /** Market data field ids requested for each listing. */
@@ -186,6 +189,8 @@ export class IbkrMarketStream {
   private readonly handlers: IbkrStreamHandlers
   private socket: IbkrWebSocketLike | null = null
   private open = false
+  /** Open and authenticated by the gateway; subscriptions are only sent then. */
+  private ready = false
   private connecting = false
   private closedByClient = false
   private reconnectAttempts = 0
@@ -213,14 +218,14 @@ export class IbkrMarketStream {
   }
 
   isConnected(): boolean {
-    return this.open
+    return this.ready
   }
 
   subscribe(symbols: string[]) {
     for (const symbol of symbols) {
       if (!this.conidBySymbol.has(symbol)) continue
       this.desired.add(symbol)
-      if (this.open) this.sendSubscribe(symbol)
+      if (this.ready) this.sendSubscribe(symbol)
     }
     if (this.desired.size > 0) this.ensureConnection()
   }
@@ -230,7 +235,7 @@ export class IbkrMarketStream {
       this.desired.delete(symbol)
       this.fieldsBySymbol.delete(symbol)
       this.pendingEmits.delete(symbol)
-      if (this.open && this.active.has(symbol)) {
+      if (this.ready && this.active.has(symbol)) {
         this.send(`umd+${this.conidBySymbol.get(symbol)}+{}`)
       }
       this.active.delete(symbol)
@@ -246,6 +251,7 @@ export class IbkrMarketStream {
     this.fieldsBySymbol.clear()
     this.pendingEmits.clear()
     this.open = false
+    this.ready = false
     const socket = this.socket
     this.socket = null
     if (socket) {
@@ -287,7 +293,7 @@ export class IbkrMarketStream {
 
     this.connectTimer = setTimeout(() => {
       this.connectTimer = null
-      if (this.socket !== socket || this.open) return
+      if (this.socket !== socket || this.ready) return
       this.handlers.onError?.({ message: 'IBKR market data stream did not connect in time' })
       try {
         socket.close()
@@ -298,13 +304,9 @@ export class IbkrMarketStream {
 
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return
-      this.clearConnectTimer()
+      // Not ready yet: the gateway authenticates the socket first (markReady).
       this.open = true
-      this.reconnectAttempts = 0
       this.startHeartbeat()
-      logger.info('IBKR market data stream connected', { symbols: this.desired.size })
-      this.handlers.onStatus?.({ state: 'connected' })
-      for (const symbol of this.desired) this.sendSubscribe(symbol)
     })
 
     socket.addEventListener('message', (event) => {
@@ -325,6 +327,7 @@ export class IbkrMarketStream {
     this.clearConnectTimer()
     this.socket = null
     this.open = false
+    this.ready = false
     this.active.clear()
     this.stopHeartbeat()
     this.handlers.onStatus?.({ state: 'disconnected' })
@@ -334,6 +337,23 @@ export class IbkrMarketStream {
   private clearConnectTimer() {
     if (this.connectTimer) clearTimeout(this.connectTimer)
     this.connectTimer = null
+  }
+
+  /**
+   * The gateway ignores a subscription sent before it has authenticated the
+   * socket. The stream used to subscribe on `open`, marking each listing
+   * subscribed, so no quote ever arrived and later subscriptions to the same
+   * listing were skipped as already sent. Subscriptions now go out once the
+   * gateway reports the session, and again whenever it re-authenticates.
+   */
+  private markReady() {
+    this.clearConnectTimer()
+    this.ready = true
+    this.reconnectAttempts = 0
+    this.active.clear()
+    for (const symbol of this.desired) this.sendSubscribe(symbol)
+    logger.info('IBKR market data stream connected', { symbols: this.desired.size })
+    this.handlers.onStatus?.({ state: 'connected' })
   }
 
   private sendSubscribe(symbol: string) {
@@ -367,11 +387,21 @@ export class IbkrMarketStream {
     }
     const topic = typeof message?.topic === 'string' ? message.topic : ''
 
-    if (topic === 'sts' && message?.args?.authenticated === false) {
-      this.handlers.onError?.({
-        message: 'IBKR gateway session is not authenticated; log in at the gateway.',
-        detail: message,
-      })
+    if (topic === 'system' && message?.success) {
+      if (!this.ready) this.markReady()
+      return
+    }
+
+    if (topic === 'sts') {
+      const authenticated = message?.args?.authenticated
+      if (authenticated === true && !this.ready) this.markReady()
+      if (authenticated === false && this.ready) {
+        const info = 'IBKR gateway session is not authenticated; log in at the gateway.'
+        this.ready = false
+        this.active.clear()
+        this.handlers.onError?.({ message: info, detail: message })
+        this.handlers.onStatus?.({ state: 'disconnected', info })
+      }
       return
     }
 
