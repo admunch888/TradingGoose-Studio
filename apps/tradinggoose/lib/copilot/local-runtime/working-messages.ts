@@ -205,6 +205,13 @@ const compactToolResult = (message: LocalWorkingMessage): LocalWorkingMessage =>
     : message
 
 /**
+ * How much of a tool result survives a second trimming pass, once dropping
+ * whole exchanges was not enough. Reached only by a long turn whose remaining
+ * exchanges still overflow the window.
+ */
+export const OVERFLOW_TOOL_RESULT_CHARS = 4_000
+
+/**
  * Drops the oldest whole tool exchanges until the estimated prompt fits the
  * model context window, then prepends the system prompt.
  *
@@ -234,20 +241,49 @@ export function trimLocalWorkingMessages(
   const latestUserIndex = (list: LocalWorkingMessage[]) =>
     list.map((message) => message.role).lastIndexOf('user')
 
-  let trimmed = messages
-  let index = 0
-  while (estimate(trimmed) > budgetChars && index < trimmed.length - 2) {
-    if (index === latestUserIndex(trimmed)) {
-      index++
-      continue
+  // The system prompt is part of the prompt the server sees, and with a skill
+  // loaded it is not small - leaving it out of the budget is how a request ends
+  // up over the window and is refused with an empty 400.
+  const systemChars = JSON.stringify(systemMessage).length
+  const fits = (list: LocalWorkingMessage[]) => systemChars + estimate(list) <= budgetChars
+
+  /** The oldest message that may be dropped: anything but the latest user turn. */
+  const firstRemovableIndex = (list: LocalWorkingMessage[]) => {
+    const keep = latestUserIndex(list)
+    for (let i = 0; i < list.length; i++) {
+      if (i !== keep) return i
     }
-    // Never split an assistant tool_calls message from its tool results: drop
-    // forward until the next user/assistant message so the pairing survives.
-    let end = index + 1
-    while (end < trimmed.length && isToolMessage(trimmed[end])) end++
-    trimmed = [...trimmed.slice(0, index), ...trimmed.slice(end)]
-    // Keep the loop bounded if nothing was removable.
-    if (isToolMessage(trimmed[index])) index++
+    return -1
+  }
+
+  const dropOldestExchanges = (list: LocalWorkingMessage[]) => {
+    while (!fits(list)) {
+      const start = firstRemovableIndex(list)
+      if (start === -1) break
+      // Never split an assistant tool_calls message from its tool results: drop
+      // forward until the next user/assistant message so the pairing survives.
+      let end = start + 1
+      while (end < list.length && isToolMessage(list[end])) end++
+      // Keep the exchange the turn is resuming; there is nothing after it.
+      if (end >= list.length) break
+      list = [...list.slice(0, start), ...list.slice(end)]
+    }
+    return list
+  }
+
+  let trimmed = dropOldestExchanges(messages)
+
+  // A long turn can still overflow once only the newest exchanges are left -
+  // each one capped at MAX_HISTORY_TOOL_RESULT_CHARS, twenty of them do not
+  // fit. Shrink the results that remain rather than return an oversized prompt.
+  if (!fits(trimmed)) {
+    trimmed = dropOldestExchanges(
+      trimmed.map((message) =>
+        isToolMessage(message) && typeof message.content === 'string'
+          ? { ...message, content: truncate(message.content, OVERFLOW_TOOL_RESULT_CHARS) }
+          : message
+      )
+    )
   }
 
   return [systemMessage, ...repairToolCallPairs(trimmed)]
