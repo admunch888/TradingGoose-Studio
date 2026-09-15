@@ -6,6 +6,7 @@ import type { IChartApi } from 'lightweight-charts'
 import type { DataChartWidgetParams } from '@/widgets/widgets/data_chart/contract'
 import { useDataChartParamsPatch } from '@/widgets/widgets/data_chart/hooks/use-data-chart-params-patch'
 import type { DataChartDataContext } from '@/widgets/widgets/data_chart/types'
+import { shouldPersistVisibleRange } from '@/widgets/widgets/data_chart/utils/chart-interaction'
 
 type UseChartVisibleRangeArgs = {
   chartRef: MutableRefObject<IChartApi | null>
@@ -63,6 +64,7 @@ export const useChartVisibleRange = ({
   )
   const pendingRef = useRef<RangeMs | null>(null)
   const flushTimerRef = useRef<number | null>(null)
+  const lastInteractionAtRef = useRef<number | null>(null)
   const patchWidgetParams = useDataChartParamsPatch()
   const patchWidgetParamsRef = useRef(patchWidgetParams)
 
@@ -114,6 +116,16 @@ export const useChartVisibleRange = ({
 
     const handleRangeChange = (range: { from: number; to: number } | null) => {
       if (!range) return
+      // A streamed quote shifts the range on its own; saving that re-rendered
+      // the widget several times a second (see shouldPersistVisibleRange).
+      if (
+        !shouldPersistVisibleRange({
+          lastInteractionAtMs: lastInteractionAtRef.current,
+          nowMs: Date.now(),
+        })
+      ) {
+        return
+      }
       const openTimes = dataContext.openTimeMsByIndexRef.current
       const next = resolveVisibleRangeMs(range, openTimes, dataContext.intervalMs)
       if (!next) return
@@ -123,7 +135,23 @@ export const useChartVisibleRange = ({
 
     timeScale.subscribeVisibleLogicalRangeChange(handleRangeChange)
 
+    const markInteraction = () => {
+      lastInteractionAtRef.current = Date.now()
+    }
+    let chartElement: HTMLElement | null = null
+    try {
+      chartElement = chart.chartElement()
+    } catch {
+      chartElement = null
+    }
+    chartElement?.addEventListener('pointerdown', markInteraction, { passive: true })
+    chartElement?.addEventListener('wheel', markInteraction, { passive: true })
+    chartElement?.addEventListener('touchstart', markInteraction, { passive: true })
+
     return () => {
+      chartElement?.removeEventListener('pointerdown', markInteraction)
+      chartElement?.removeEventListener('wheel', markInteraction)
+      chartElement?.removeEventListener('touchstart', markInteraction)
       if (flushTimerRef.current !== null) {
         window.clearTimeout(flushTimerRef.current)
         flushTimerRef.current = null
