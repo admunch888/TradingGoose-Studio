@@ -113,6 +113,45 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
     ],
   },
   {
+    id: 'openai_compatible_embeddings',
+    displayName: 'Self-hosted embeddings (OpenAI-compatible)',
+    description:
+      'Knowledge base embeddings from any OpenAI-compatible /v1/embeddings host (SGLang, vLLM, TEI, Ollama). When a base URL and model are set it is used instead of Azure OpenAI and OpenAI. Vectors are stored at 1536 dimensions.',
+    credentialFields: [
+      {
+        key: 'apiKey',
+        label: 'API Key',
+        description: 'Optional bearer token for the endpoint, if it requires one.',
+        required: false,
+      },
+    ],
+    settingFields: [
+      {
+        key: 'baseUrl',
+        label: 'Base URL',
+        description:
+          'Base URL of the embeddings host, e.g. http://host:8081. Do not include a trailing /v1; the app appends it.',
+        type: 'url',
+        required: false,
+      },
+      {
+        key: 'model',
+        label: 'Model',
+        description: 'Embedding model name the host serves, e.g. Qwen/Qwen3-Embedding-4B.',
+        type: 'text',
+        required: false,
+      },
+      {
+        key: 'sendDimensions',
+        label: 'Request 1536 Dimensions',
+        description:
+          'Send dimensions: 1536 with each request, for hosts and Matryoshka models that support it (Qwen3-Embedding). Off, longer vectors are truncated and re-normalised and shorter ones zero-padded to 1536.',
+        type: 'boolean',
+        required: false,
+      },
+    ],
+  },
+  {
     id: 'serper',
     displayName: 'Serper',
     description: 'Primary web search provider for generic online search.',
