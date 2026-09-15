@@ -55,6 +55,26 @@ describe('local Copilot settings', () => {
     })
   })
 
+  it('sends the sampling cutoffs that keep a quantized model off its noisy tail', () => {
+    // Without top_p/top_k the server samples the whole vocabulary even at a low
+    // temperature, which is how an FP8 model ends up emitting runs of one
+    // junk character.
+    const settings = normalizeLocalCopilotSettings({
+      copilotTemperature: 0.6,
+      copilotTopP: 0.95,
+      copilotTopK: 20,
+      copilotPresencePenalty: 1.5,
+    })
+
+    expect(settings).toMatchObject({ temperature: 0.6, topP: 0.95, topK: 20, presencePenalty: 1.5 })
+    expect(buildLocalCopilotSamplingOptions(settings)).toEqual({
+      temperature: 0.6,
+      top_p: 0.95,
+      top_k: 20,
+      presence_penalty: 1.5,
+    })
+  })
+
   it('ignores values outside the supported range', () => {
     expect(
       normalizeLocalCopilotSettings({
@@ -67,6 +87,15 @@ describe('local Copilot settings', () => {
       20
     )
     expect(normalizeLocalCopilotSettings({ copilotTemperature: 0 }).temperature).toBe(0)
+
+    // top_k = 0 means "disabled" on some servers and "no tokens" on others, so
+    // it is rejected rather than forwarded.
+    expect(normalizeLocalCopilotSettings({ copilotTopK: 0 }).topK).toBeUndefined()
+    expect(normalizeLocalCopilotSettings({ copilotTopP: 1.5 }).topP).toBeUndefined()
+    expect(
+      normalizeLocalCopilotSettings({ copilotPresencePenalty: 3 }).presencePenalty
+    ).toBeUndefined()
+    expect(normalizeLocalCopilotSettings({ copilotTopK: 20.7 }).topK).toBe(20)
   })
 
   it('reads the self-hosted endpoint service and survives a failure', async () => {

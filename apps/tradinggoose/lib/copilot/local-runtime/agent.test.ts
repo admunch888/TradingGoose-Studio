@@ -80,11 +80,16 @@ vi.mock('@/lib/copilot/runtime-tool-manifest', () => ({
   }),
 }))
 
+const executeServerToolMock = vi.hoisted(() =>
+  vi.fn(async () => ({ success: true, result: { ok: true } }))
+)
+
 vi.mock('@/lib/copilot/local-runtime/tool-execution', () => ({
-  executeLocalCopilotServerTool: async () => ({ success: true, result: { ok: true } }),
+  executeLocalCopilotServerTool: executeServerToolMock,
 }))
 
 import { LOCAL_CLIENT_ONLY_TOOLS, runLocalCopilotTurn } from '@/lib/copilot/local-runtime/agent'
+import { REPEATED_TOOL_CALL_LIMIT } from '@/lib/copilot/local-runtime/repeated-tool-calls'
 import type { LocalSseEventSink } from '@/lib/copilot/local-runtime/types'
 
 function recorder() {
@@ -130,6 +135,7 @@ function functionCallFrames(frames: Array<Record<string, unknown>>, name: string
 beforeEach(() => {
   mockState.streams = []
   mockState.createBodies = []
+  executeServerToolMock.mockClear()
 })
 
 describe('local agent client-only tool handoff', () => {
@@ -225,5 +231,44 @@ describe('local agent tool call arguments', () => {
     expect(functionCallFrames(frames, 'list_workflows')[0]?.item?.arguments).toBe(
       '{"workspaceId":"ws-1"}'
     )
+  })
+})
+
+describe('local agent repeating one tool call', () => {
+  it('stops running a call the model keeps repeating and ends the turn', async () => {
+    // A small model that re-issues the same call after every result used to
+    // spend the whole tool budget on it.
+    mockState.streams = Array.from({ length: 8 }, () =>
+      toolCallChunks('get_blocks_metadata', 'call_repeat', '{"blockTypes":["agent"]}')
+    )
+    const { sink } = recorder()
+
+    const result = await runLocalCopilotTurn(turnParams(sink))
+
+    expect(executeServerToolMock).toHaveBeenCalledTimes(REPEATED_TOOL_CALL_LIMIT)
+    expect(result.awaiting).toBeNull()
+    // The turn ended before the 8 scripted responses were used up.
+    expect(mockState.createBodies.length).toBeLessThan(8)
+
+    const repeatedResults = result.workingMessages.filter(
+      (message) => message.role === 'tool' && message.content?.includes('Repeated call')
+    )
+    expect(repeatedResults.length).toBeGreaterThan(0)
+    expect(repeatedResults[0]?.content).toContain('get_blocks_metadata')
+  })
+
+  it('keeps running a call whose arguments changed', async () => {
+    mockState.streams = [
+      toolCallChunks('get_blocks_metadata', 'call_1', '{"blockTypes":["agent"]}'),
+      toolCallChunks('get_blocks_metadata', 'call_2', '{"blockTypes":["response"]}'),
+      toolCallChunks('get_blocks_metadata', 'call_3', '{"blockTypes":["knowledge"]}'),
+      toolCallChunks('get_blocks_metadata', 'call_4', '{"blockTypes":["api"]}'),
+      [{ choices: [{ delta: { content: 'done' } }] }],
+    ]
+    const { sink } = recorder()
+
+    await runLocalCopilotTurn(turnParams(sink))
+
+    expect(executeServerToolMock).toHaveBeenCalledTimes(4)
   })
 })
