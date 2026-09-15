@@ -31,9 +31,15 @@ vi.mock('@/stores/providers/store', () => ({
         base: { models: ['gpt-4o'] },
         ollama: { models: [] },
         openrouter: { models: [] },
+        vllm: { models: ['vllm/qwen3.8-fp8'] },
       },
     })),
   },
+}))
+
+vi.mock('@/lib/environment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/environment')>()),
+  isHosted: false,
 }))
 
 vi.mock('@/blocks', () => ({
@@ -78,6 +84,26 @@ describe('AgentBlock', () => {
     expect(skillsSubBlock).toBeDefined()
     expect(skillsSubBlock?.type).toBe('skill-input')
     expect(skillsSubBlock?.defaultValue).toEqual([])
+  })
+
+  it('offers the self-hosted vLLM models in the model dropdown', () => {
+    const modelSubBlock = AgentBlock.subBlocks.find((subBlock) => subBlock.id === 'model')
+    const options = (modelSubBlock?.options as () => Array<{ id: string }>)()
+
+    expect(options.map((option) => option.id)).toEqual(
+      expect.arrayContaining(['gpt-4o', 'vllm/qwen3.8-fp8'])
+    )
+  })
+
+  it('hides the API key field for vLLM models, which use the service key', () => {
+    const apiKeySubBlock = AgentBlock.subBlocks.find((subBlock) => subBlock.id === 'apiKey')
+    const condition =
+      typeof apiKeySubBlock?.condition === 'function'
+        ? apiKeySubBlock.condition()
+        : apiKeySubBlock?.condition
+
+    expect(condition).toMatchObject({ field: 'model', not: true })
+    expect((condition as { value: string[] }).value).toContain('vllm/qwen3.8-fp8')
   })
 
   describe('tools.config.params function', () => {

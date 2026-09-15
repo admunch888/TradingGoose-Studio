@@ -17,8 +17,13 @@ import {
   supportsTemperature,
 } from '@/providers/ai/utils'
 
-const getCurrentOllamaModels = () => {
-  return useProvidersStore.getState().providers.ollama.models
+/**
+ * Self-hosted models that take no API key in the block: Ollama needs none, and
+ * vLLM uses the key saved with its service in Admin > Services.
+ */
+const getCurrentKeylessModels = () => {
+  const { providers } = useProvidersStore.getState()
+  return [...providers.ollama.models, ...(providers.vllm?.models ?? [])]
 }
 
 import { useProvidersStore } from '@/stores/providers/store'
@@ -32,7 +37,9 @@ const getAvailableModels = () => {
   const baseModels = providersState.providers.base.models
   const ollamaModels = providersState.providers.ollama.models
   const openrouterModels = providersState.providers.openrouter.models
-  return Array.from(new Set([...baseModels, ...ollamaModels, ...openrouterModels]))
+  // Discovered from the self-hosted OpenAI-compatible service (vllm/<model>).
+  const vllmModels = providersState.providers.vllm?.models ?? []
+  return Array.from(new Set([...baseModels, ...ollamaModels, ...openrouterModels, ...vllmModels]))
 }
 
 const getAvailableModelOptions = (): SubBlockOption[] => {
@@ -299,7 +306,7 @@ Create a system prompt appropriately detailed for the request, using clear langu
       password: true,
       connectionDroppable: false,
       required: true,
-      // Hide API key for hosted models and Ollama models
+      // Hide API key for hosted models and self-hosted (Ollama, vLLM) models
       condition: isHosted
         ? {
             field: 'model',
@@ -308,8 +315,8 @@ Create a system prompt appropriately detailed for the request, using clear langu
           }
         : () => ({
             field: 'model',
-            value: getCurrentOllamaModels(),
-            not: true, // Show for all models EXCEPT Ollama models
+            value: getCurrentKeylessModels(),
+            not: true, // Show for all models EXCEPT Ollama and vLLM models
           }),
     },
     {
