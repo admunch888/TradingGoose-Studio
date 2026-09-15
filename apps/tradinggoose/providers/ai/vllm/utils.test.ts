@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@/providers/ai/types'
 import {
+  normalizeMessageOrder,
   summarizeVllmMessages,
   VLLM_IMPLICIT_USER_MESSAGE,
   withUserMessage,
@@ -48,5 +49,50 @@ describe('summarizeVllmMessages', () => {
       hasUserMessage: true,
     })
     expect(JSON.stringify(summary)).not.toContain('secret playbook')
+  })
+})
+
+describe('normalizeMessageOrder', () => {
+  it('moves system instructions in front of the block context', () => {
+    // The Agent block sends its context first, then its system and user prompts.
+    const messages: Message[] = [
+      { role: 'user', content: 'chain json' },
+      { role: 'system', content: 'You are an options analyst.' },
+      { role: 'user', content: 'Evaluate this chain.' },
+    ]
+
+    expect(normalizeMessageOrder(messages)).toEqual([
+      { role: 'system', content: 'You are an options analyst.' },
+      { role: 'user', content: 'chain json' },
+      { role: 'user', content: 'Evaluate this chain.' },
+    ])
+  })
+
+  it('merges several system messages into the leading one', () => {
+    const messages: Message[] = [
+      { role: 'system', content: 'Playbook.' },
+      { role: 'user', content: 'Evaluate this chain.' },
+      { role: 'system', content: 'Skills: options-playbook.' },
+    ]
+
+    expect(normalizeMessageOrder(messages)).toEqual([
+      { role: 'system', content: 'Playbook.\n\nSkills: options-playbook.' },
+      { role: 'user', content: 'Evaluate this chain.' },
+    ])
+  })
+
+  it('leaves a conversation that already leads with one system message unchanged', () => {
+    const messages: Message[] = [
+      { role: 'system', content: 'You are an options analyst.' },
+      { role: 'user', content: 'Evaluate this chain.' },
+    ]
+
+    expect(normalizeMessageOrder(messages)).toBe(messages)
+  })
+
+  it('leaves a conversation with no system message unchanged', () => {
+    const messages: Message[] = [{ role: 'user', content: 'Evaluate this chain.' }]
+
+    expect(normalizeMessageOrder(messages)).toBe(messages)
   })
 })

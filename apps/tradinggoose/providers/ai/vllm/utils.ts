@@ -53,3 +53,26 @@ export function summarizeVllmMessages(messages: Message[]): {
     estimatedChars: messages.reduce((total, message) => total + JSON.stringify(message).length, 0),
   }
 }
+
+/**
+ * Puts the conversation's system instructions first, as one message.
+ *
+ * The Agent block sends its block context as a user message before its own
+ * system and user prompts, so the request read `user, system, user`. Qwen-style
+ * chat templates only accept a system message at the front - with tools
+ * attached the template raises on a later one - and SGLang answers with an
+ * empty 400 before the model runs. Several system messages are merged so the
+ * result is always one leading system turn; everything else keeps its order.
+ */
+export function normalizeMessageOrder(messages: Message[]): Message[] {
+  const systemMessages = messages.filter((message) => message.role === 'system')
+  if (systemMessages.length === 0) return messages
+  if (systemMessages.length === 1 && messages[0]?.role === 'system') return messages
+
+  const content = systemMessages
+    .map((message) => message.content ?? '')
+    .filter((text) => text.trim().length > 0)
+    .join('\n\n')
+
+  return [{ role: 'system', content }, ...messages.filter((message) => message.role !== 'system')]
+}
