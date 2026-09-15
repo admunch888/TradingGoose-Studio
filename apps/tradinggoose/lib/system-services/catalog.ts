@@ -374,6 +374,30 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
         required: false,
       },
       {
+        key: 'copilotTopP',
+        label: 'Copilot Top P',
+        description:
+          'Nucleus sampling cutoff for Copilot, 0 to 1. Empty uses the server default of 1 (no cutoff). Qwen3 recommends 0.95 with thinking on, 0.8 with it off.',
+        type: 'number',
+        required: false,
+      },
+      {
+        key: 'copilotTopK',
+        label: 'Copilot Top K',
+        description:
+          'How many of the most likely tokens Copilot samples from, 1 to 1000. Empty uses the server default, which is the whole vocabulary - a common cause of repeated junk characters from a quantized model. Qwen3 recommends 20.',
+        type: 'number',
+        required: false,
+      },
+      {
+        key: 'copilotPresencePenalty',
+        label: 'Copilot Presence Penalty',
+        description:
+          'Discourages Copilot from repeating itself, -2 to 2. Empty sends nothing. Raise towards 1.5 if replies loop; too high can cause language mixing.',
+        type: 'number',
+        required: false,
+      },
+      {
         key: 'copilotMaxToolIterations',
         label: 'Copilot Max Tool Steps',
         description: 'Model calls allowed in one Copilot turn, 1 to 100. Empty uses 20.',

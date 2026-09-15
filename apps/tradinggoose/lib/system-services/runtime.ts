@@ -144,6 +144,9 @@ export const resolveVllmServiceConfig = createServiceResolver('vllm', (config) =
   copilotContextWindow: asNumber(config.copilotContextWindow),
   copilotMaxToolIterations: asNumber(config.copilotMaxToolIterations),
   copilotTemperature: asNumber(config.copilotTemperature),
+  copilotTopP: asNumber(config.copilotTopP),
+  copilotTopK: asNumber(config.copilotTopK),
+  copilotPresencePenalty: asNumber(config.copilotPresencePenalty),
   copilotEnableThinking: asBoolean(config.copilotEnableThinking),
 }))
 
