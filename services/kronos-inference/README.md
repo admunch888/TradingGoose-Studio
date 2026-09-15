@@ -4,13 +4,43 @@ A private FastAPI service that runs the [Kronos](https://github.com/shiyu-coder/
 
 ## Build
 
-The Docker build downloads the pinned model and tokenizer revisions from Hugging Face (about 400 MB), so there is no separate setup step. The runtime image is CPU-only and runs offline (`HF_HUB_OFFLINE=1`).
+The Docker build downloads the pinned model and tokenizer revisions from Hugging Face (about 400 MB), so there is no separate setup step. The runtime image runs offline (`HF_HUB_OFFLINE=1`) and is CPU-only by default.
 
 ```bash
 docker build -t tradinggoose/kronos-inference:local services/kronos-inference
 ```
 
 The revisions are build args (`KRONOS_MODEL_REVISION`, `KRONOS_TOKENIZER_REVISION`) and must match the defaults in `src/kronos_api/config.py`. `tests/test_container_packaging.py` checks that they do.
+
+### Building for an NVIDIA GPU
+
+PyTorch publishes one wheel per compute backend, so the backend is a build-time choice, not a runtime setting. `TORCH_INDEX_URL` selects it:
+
+```bash
+docker build \
+  --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128 \
+  -t tradinggoose/kronos-inference:cuda services/kronos-inference
+```
+
+CUDA wheels bundle their own CUDA runtime, so the base image does not change; the image grows to roughly 3-4 GB. Pick the index that matches the host driver (`cu126`, `cu128`, `cu129`), not the CUDA version installed on the host. In Compose, set `KRONOS_TORCH_INDEX_URL` to the same URL.
+
+A GPU image still needs the GPU handed to the container. On WSL with Podman:
+
+1. Install the current NVIDIA Windows driver, then confirm `nvidia-smi` works inside the distro.
+2. Install the NVIDIA Container Toolkit and generate the device spec: `nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`.
+3. Give the service the device and switch it on:
+
+   ```yaml
+   kronos:
+     devices:
+       - nvidia.com/gpu=all
+     environment:
+       - KRONOS_DEVICE=cuda
+   ```
+
+4. Verify: `GET /health/ready` reports `"device": "cuda"`.
+
+`KRONOS_DEVICE` is checked before the weights are read, so a container that cannot reach a GPU exits at startup naming what is missing - a CPU-only image, or a GPU the container was not given - rather than failing inside the first forecast. Keep the CPU image around until the GPU path is proven: switching back is a `KRONOS_DEVICE` change and a rebuild with the default index.
 
 ## Run with Docker Compose
 
@@ -36,6 +66,7 @@ Service (environment prefix `KRONOS_`):
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `KRONOS_API_TOKEN` | required | 32+ characters. The app sends it as `KRONOS_INTERNAL_TOKEN`. |
+| `KRONOS_DEVICE` | `cpu` | `cpu`, `cuda`, `cuda:<index>` or `mps`. Anything but `cpu` needs a matching image (see above). |
 | `KRONOS_MAX_CONTEXT` | `512` | History bars the model sees. |
 | `KRONOS_MAX_QUEUE` | `8` | Requests waiting beyond this get 429. |
 | `KRONOS_INFERENCE_CONCURRENCY` | `1` | Parallel inferences. |

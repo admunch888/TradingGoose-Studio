@@ -6,6 +6,59 @@ import pandas as pd
 from kronos_api.config import Settings
 from kronos_api.schemas import ForecastRequest
 
+CUDA_INDEX_HINT = "https://download.pytorch.org/whl/cu128"
+
+
+class DeviceUnavailableError(RuntimeError):
+    """The configured KRONOS_DEVICE cannot be used by this image on this host."""
+
+
+def resolve_device(requested: str, torch_module: Any) -> str:
+    """
+    Check that the configured device can actually run the model, and say what is
+    missing when it cannot.
+
+    A GPU only works when three things line up: the image was built from a CUDA
+    wheel index, the host driver and NVIDIA container toolkit are installed, and
+    the container was given the device. Each of those fails differently and none
+    of them fails where the operator is looking, so they get separate messages
+    here rather than a `RuntimeError: No CUDA GPUs are available` from deep
+    inside the first forward pass.
+    """
+    device = requested.strip().lower()
+
+    if device == "cpu":
+        return device
+
+    if device == "mps":
+        backend = getattr(torch_module.backends, "mps", None)
+        if backend is None or not backend.is_available():
+            raise DeviceUnavailableError(
+                "KRONOS_DEVICE is mps, but this PyTorch build has no Metal backend."
+            )
+        return device
+
+    if device == "cuda" or device.startswith("cuda:"):
+        if torch_module.version.cuda is None:
+            raise DeviceUnavailableError(
+                f"KRONOS_DEVICE is {requested}, but this image was built from the CPU "
+                "PyTorch index and has no CUDA runtime. Rebuild it with "
+                f"--build-arg TORCH_INDEX_URL={CUDA_INDEX_HINT}."
+            )
+        if not torch_module.cuda.is_available():
+            raise DeviceUnavailableError(
+                f"KRONOS_DEVICE is {requested}, and this image has CUDA "
+                f"{torch_module.version.cuda}, but no GPU is visible inside the "
+                "container. Check the host driver (nvidia-smi), the NVIDIA "
+                "Container Toolkit, and that the container was given the device "
+                "(devices: [nvidia.com/gpu=all])."
+            )
+        return device
+
+    raise DeviceUnavailableError(
+        f"KRONOS_DEVICE must be cpu, cuda, cuda:<index> or mps, not {requested!r}."
+    )
+
 
 class KronosRuntime:
     def __init__(self, settings: Settings):
@@ -22,7 +75,13 @@ class KronosRuntime:
         }
 
     def load(self) -> None:
+        import torch
         from model import Kronos, KronosPredictor, KronosTokenizer
+
+        # Before the weights are read, so a misconfigured device fails startup with
+        # its own message instead of a CUDA error minutes into loading.
+        device = resolve_device(self.settings.device, torch)
+        self.metadata["device"] = device
 
         tokenizer = KronosTokenizer.from_pretrained(self.settings.tokenizer_path)
         model = Kronos.from_pretrained(self.settings.model_path)
@@ -31,7 +90,7 @@ class KronosRuntime:
         self._predictor = KronosPredictor(
             model,
             tokenizer,
-            device=self.settings.device,
+            device=device,
             max_context=self.settings.max_context,
         )
         if self.settings.warmup:

@@ -482,7 +482,9 @@ kronos:
       memory: "2Gi"
       cpu: "1000m"
 
-  # Extra service settings (KRONOS_ prefix), e.g. KRONOS_MAX_QUEUE
+  # Extra service settings (KRONOS_ prefix), e.g. KRONOS_MAX_QUEUE. Set
+  # KRONOS_DEVICE: cuda for a GPU image, and give the pod a GPU through
+  # resources.limits (nvidia.com/gpu) and nodeSelector.
   env: {}
 
   # Service configuration (the container listens on 8000)

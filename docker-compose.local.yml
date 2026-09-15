@@ -111,8 +111,13 @@ services:
       - kronos
     build:
       context: ./services/kronos-inference
+      args:
+        # https://download.pytorch.org/whl/cu128 builds the image for an NVIDIA
+        # host; the container also needs the GPU (see services/kronos-inference/README.md).
+        - TORCH_INDEX_URL=${KRONOS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     environment:
       - KRONOS_API_TOKEN=${KRONOS_API_TOKEN:-}
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-cpu}
     restart: unless-stopped
 
 volumes:

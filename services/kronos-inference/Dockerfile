@@ -35,8 +35,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 ENV PATH="/root/.local/bin:${PATH}"
 ENV PYTHONPATH="/app/src:/app/third_party/kronos"
 
+# PyTorch ships a separate wheel per compute backend, so the backend is chosen by
+# the index the wheels come from. The default keeps the image CPU-only; build with
+# --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128 for an NVIDIA
+# host (see README.md). CUDA wheels carry their own CUDA runtime, so the base image
+# stays the same either way - only the image size changes.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
 COPY pyproject.toml uv.lock ./
-RUN uv pip install --system --index https://download.pytorch.org/whl/cpu --default-index https://pypi.org/simple .
+RUN uv pip install --system --index "${TORCH_INDEX_URL}" --default-index https://pypi.org/simple .
 
 COPY src ./src
 COPY third_party/kronos/model ./third_party/kronos/model

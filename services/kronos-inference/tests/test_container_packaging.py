@@ -47,12 +47,21 @@ def test_runtime_pythonpath_includes_app_and_vendored_model() -> None:
     assert "/app/third_party/kronos" in pythonpath_line
 
 
-def test_cpu_pytorch_index_has_priority_without_unsafe_resolution() -> None:
+def test_pytorch_index_has_priority_without_unsafe_resolution() -> None:
     text = DOCKERFILE.read_text()
     install_line = next(
         line for line in text.splitlines() if line.startswith("RUN uv pip install")
     )
 
-    assert "--index https://download.pytorch.org/whl/cpu" in install_line
+    assert '--index "${TORCH_INDEX_URL}"' in install_line
     assert "--default-index https://pypi.org/simple" in install_line
     assert "unsafe-best-match" not in text
+
+
+def test_the_default_build_stays_cpu_only() -> None:
+    # A GPU image is an opt-in build argument: CI, laptops and the CPU fallback
+    # host all build this Dockerfile with no arguments and must not pull ~3 GB of
+    # CUDA wheels they cannot use.
+    text = DOCKERFILE.read_text()
+
+    assert "ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu" in text
