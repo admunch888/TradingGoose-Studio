@@ -23,6 +23,7 @@ import {
 } from '@/providers/ai/utils'
 import {
   createReadableStreamFromVLLMStream,
+  normalizeMessageOrder,
   summarizeVllmMessages,
   withUserMessage,
 } from '@/providers/ai/vllm/utils'
@@ -129,13 +130,22 @@ export const vllmProvider: ProviderConfig = {
       builtMessages.push(...request.messages)
     }
 
-    // See withUserMessage: a request with no user turn is refused by Qwen-style
-    // chat templates before the model runs.
-    const allMessages = withUserMessage(builtMessages)
-    if (allMessages !== builtMessages) {
-      logger.warn('vLLM request had no user message; added one for the chat template', {
+    // See normalizeMessageOrder and withUserMessage: a system message after a
+    // user one, or a conversation with no user turn at all, is refused by
+    // Qwen-style chat templates before the model runs.
+    const orderedMessages = normalizeMessageOrder(builtMessages)
+    if (orderedMessages !== builtMessages) {
+      logger.warn('vLLM request had system instructions after a user message; moved them first', {
         model: request.model,
         ...summarizeVllmMessages(builtMessages),
+      })
+    }
+
+    const allMessages = withUserMessage(orderedMessages)
+    if (allMessages !== orderedMessages) {
+      logger.warn('vLLM request had no user message; added one for the chat template', {
+        model: request.model,
+        ...summarizeVllmMessages(orderedMessages),
       })
     }
 
