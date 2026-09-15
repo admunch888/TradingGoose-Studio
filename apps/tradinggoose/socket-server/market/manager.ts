@@ -34,8 +34,11 @@ import {
   AlpacaMarketStream,
 } from './alpaca'
 import { FinnhubMarketStream } from './finnhub'
+import { IbkrMarketStream, isIbkrMarketStreamingEnabled, resolveIbkrStreamConid } from './ibkr'
 
 const logger = createLogger('MarketStreamManager')
+/** One gateway session serves every IBKR quote, so all listings share one stream. */
+const IBKR_STREAM_KEY = 'ibkr:gateway-stream'
 const DEFAULT_POLLING_INTERVAL_MS = 15_000
 const MIN_POLLING_INTERVAL_MS = 5_000
 const POLLING_CONCURRENCY = 5
@@ -100,6 +103,7 @@ type MarketStream = {
 
 interface StreamState {
   stream?: MarketStream
+  ibkrStream?: IbkrMarketStream
   provider: AnyMarketProviderId
   market: AlpacaMarket
   feed?: AlpacaFeed
@@ -131,6 +135,14 @@ export class MarketStreamManager {
 
     if (provider === 'finnhub') {
       return this.subscribeFinnhub(socket, { ...resolvedPayload, provider })
+    }
+
+    if (
+      provider === 'ibkr' &&
+      (resolvedPayload.channel ?? 'quote-snapshots') === 'quote-snapshots' &&
+      isIbkrMarketStreamingEnabled()
+    ) {
+      return this.subscribeIbkrStream(socket, { ...resolvedPayload, provider })
     }
 
     return this.subscribePollingProvider(socket, { ...resolvedPayload, provider })
@@ -469,6 +481,143 @@ export class MarketStreamManager {
       channel,
       interval: payload.interval,
     }
+  }
+
+  /**
+   * IBKR quotes stream from the gateway WebSocket (ibkr.ts): prices move as the
+   * gateway pushes them instead of every 15s, and a streamed price costs no
+   * gateway request. While the stream is down (gateway logged out, socket
+   * dropped), the same subscribers are polled until it reconnects.
+   */
+  private async subscribeIbkrStream(
+    socket: AuthenticatedSocket,
+    payload: MarketSubscribePayload & { provider: PollingMarketProviderId }
+  ): Promise<MarketSubscriptionInfo> {
+    const listing = ListingIdentitySchema.parse(payload.listing)
+    const providerConfig = getMarketProviderConfig(payload.provider)
+    if (!providerConfig) {
+      throw new Error(`Market provider not found: ${payload.provider}`)
+    }
+
+    const context = await resolveListingContext(listing)
+    const market = resolveMarket(payload, context.assetClass)
+    const symbol = normalizeSymbol(resolveProviderSymbol(providerConfig, context))
+    if (!symbol) {
+      throw new Error('Failed to resolve provider symbol for listing')
+    }
+    const conid = await resolveIbkrStreamConid({
+      symbol,
+      assetClass: context.assetClass,
+      marketCode: context.marketCode,
+      currency: context.quote,
+    })
+
+    const streamState = this.getOrCreateIbkrStream({
+      provider: payload.provider,
+      auth: payload.auth,
+      providerParams: payload.providerParams,
+      pollingIntervalMs: resolvePollingIntervalMs(payload.provider, payload.providerParams),
+    })
+    streamState.ibkrStream?.setConid(symbol, conid)
+
+    const channel: MarketChannel = 'quote-snapshots'
+    const subscriptionId = createSubscriptionId({
+      streamKey: IBKR_STREAM_KEY,
+      channel,
+      symbol,
+      interval: 'na',
+      clientSubscriptionId: payload.clientSubscriptionId,
+    })
+    const record: MarketSubscriptionRecord = {
+      subscriptionId,
+      clientSubscriptionId: payload.clientSubscriptionId,
+      streamKey: IBKR_STREAM_KEY,
+      listing,
+      socketId: socket.id,
+      socket,
+      symbol,
+      provider: payload.provider,
+      market,
+      channel,
+      upstreamChannel: 'quotes',
+      interval: payload.interval,
+      listingBase: context.base,
+      listingQuote: context.quote,
+    }
+
+    this.addSubscription(streamState, record)
+
+    logger.info('IBKR streaming market subscription added', {
+      socketId: socket.id,
+      userId: socket.userId,
+      listing,
+      symbol,
+      conid,
+    })
+
+    return {
+      subscriptionId,
+      clientSubscriptionId: payload.clientSubscriptionId,
+      listing,
+      symbol,
+      provider: payload.provider,
+      market,
+      channel,
+      interval: payload.interval,
+    }
+  }
+
+  private getOrCreateIbkrStream(config: {
+    provider: PollingMarketProviderId
+    auth?: MarketProviderAuth
+    providerParams?: MarketProviderParams
+    pollingIntervalMs: number
+  }): StreamState {
+    const existing = this.streams.get(IBKR_STREAM_KEY)
+    if (existing) return existing
+
+    const state: StreamState = {
+      provider: config.provider,
+      market: 'stocks',
+      auth: config.auth,
+      providerParams: config.providerParams,
+      pollingIntervalMs: config.pollingIntervalMs,
+      quoteSnapshotCache: new Map(),
+      marketBarCache: new Map(),
+      subscribersBySymbol: new Map(),
+    }
+
+    const stream = new IbkrMarketStream({
+      onQuote: ({ symbol, snapshot }) => {
+        state.quoteSnapshotCache.set(symbol, snapshot)
+        this.emitQuoteSnapshotToSymbolSubscribers(state, symbol, snapshot)
+      },
+      onStatus: ({ state: status, info }) => {
+        if (status === 'connected') {
+          this.stopPolling(state)
+          return
+        }
+        if (this.streams.get(IBKR_STREAM_KEY) !== state || state.subscribersBySymbol.size === 0) {
+          return
+        }
+        logger.warn('IBKR market data stream unavailable; polling until it reconnects', { info })
+        this.ensurePolling(state)
+      },
+      onError: ({ message }) => {
+        logger.warn('IBKR market data stream error', { message })
+      },
+    })
+    state.stream = stream
+    state.ibkrStream = stream
+
+    this.streams.set(IBKR_STREAM_KEY, state)
+    return state
+  }
+
+  private stopPolling(streamState: StreamState) {
+    if (!streamState.pollingTimer) return
+    clearInterval(streamState.pollingTimer)
+    streamState.pollingTimer = undefined
   }
 
   private addSubscription(streamState: StreamState, record: MarketSubscriptionRecord) {

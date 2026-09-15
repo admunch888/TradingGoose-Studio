@@ -101,6 +101,34 @@ vi.mock('@/socket-server/market/finnhub', () => ({
   },
 }))
 
+const { ibkrStreamInstances, isIbkrMarketStreamingEnabledMock, resolveIbkrStreamConidMock } =
+  vi.hoisted(() => ({
+    ibkrStreamInstances: [] as any[],
+    isIbkrMarketStreamingEnabledMock: vi.fn(() => true),
+    resolveIbkrStreamConidMock: vi.fn(async () => 730283085),
+  }))
+
+vi.mock('@/socket-server/market/ibkr', () => ({
+  IbkrMarketStream: class {
+    setConid = vi.fn()
+    subscribe = vi.fn()
+    unsubscribe = vi.fn()
+    close = vi.fn()
+
+    constructor(handlers: unknown) {
+      ibkrStreamInstances.push({
+        handlers,
+        setConid: this.setConid,
+        subscribe: this.subscribe,
+        unsubscribe: this.unsubscribe,
+        close: this.close,
+      })
+    }
+  },
+  isIbkrMarketStreamingEnabled: isIbkrMarketStreamingEnabledMock,
+  resolveIbkrStreamConid: resolveIbkrStreamConidMock,
+}))
+
 import {
   MarketStreamManager,
   type MarketSubscribePayload,
@@ -442,5 +470,137 @@ describe('MarketStreamManager quote snapshots', () => {
 
     manager.removeSocket(firstSocket.id)
     manager.removeSocket(secondSocket.id)
+  })
+})
+
+describe('MarketStreamManager IBKR streaming quotes', () => {
+  const mesListing = {
+    listing_id: 'MESZ26',
+    base_id: '',
+    quote_id: '',
+    listing_type: 'default' as const,
+    manual: { assetClass: 'future' as const, marketCode: 'CME' },
+  }
+  const streamedQuote = {
+    lastPrice: 7699.5,
+    previousClose: 7727.25,
+    change: -27.75,
+    changePercent: -0.36,
+  }
+
+  const subscribeMes = (manager: MarketStreamManager, socketId: string, clientId: string) => {
+    const socket = createSocket(socketId)
+    return manager
+      .subscribe(socket, {
+        provider: 'ibkr',
+        workspaceId: 'workspace-1',
+        listing: mesListing,
+        channel: 'quote-snapshots',
+        clientSubscriptionId: clientId,
+      })
+      .then(() => socket)
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ibkrStreamInstances.length = 0
+    isIbkrMarketStreamingEnabledMock.mockReturnValue(true)
+    resolveIbkrStreamConidMock.mockResolvedValue(730283085)
+    buildMarketQuoteSnapshotMock.mockResolvedValue(streamedQuote)
+    getMarketProviderConfigMock.mockReturnValue({})
+    getMarketProviderPollingIntervalMsMock.mockReturnValue(15_000)
+    resolveListingContextMock.mockResolvedValue({
+      listing: mesListing,
+      base: 'MESZ26',
+      quote: 'USD',
+      assetClass: 'future',
+      marketCode: 'CME',
+    })
+    resolveProviderSymbolMock.mockReturnValue('MESZ26')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('streams quotes to every subscriber through one gateway stream, without polling', async () => {
+    vi.useFakeTimers()
+    const manager = new MarketStreamManager()
+    const firstSocket = await subscribeMes(manager, 'socket-1', 'quote-1')
+    const secondSocket = await subscribeMes(manager, 'socket-2', 'quote-2')
+
+    expect(ibkrStreamInstances).toHaveLength(1)
+    const stream = ibkrStreamInstances[0]
+    expect(resolveIbkrStreamConidMock).toHaveBeenCalledWith({
+      symbol: 'MESZ26',
+      assetClass: 'future',
+      marketCode: 'CME',
+      currency: 'USD',
+    })
+    expect(stream.setConid).toHaveBeenCalledWith('MESZ26', 730283085)
+    expect(stream.subscribe).toHaveBeenCalledTimes(1)
+    expect(stream.subscribe).toHaveBeenCalledWith(['MESZ26'], 'quotes')
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(buildMarketQuoteSnapshotMock).not.toHaveBeenCalled()
+
+    stream.handlers.onQuote({ symbol: 'MESZ26', snapshot: streamedQuote, raw: {} })
+
+    for (const [socket, clientSubscriptionId] of [
+      [firstSocket, 'quote-1'],
+      [secondSocket, 'quote-2'],
+    ] as const) {
+      expect(socket.emit).toHaveBeenCalledWith(
+        'market-quote-snapshot',
+        expect.objectContaining({
+          provider: 'ibkr',
+          channel: 'quote-snapshots',
+          clientSubscriptionId,
+          snapshot: streamedQuote,
+        })
+      )
+    }
+
+    manager.removeSocket(firstSocket.id)
+    expect(stream.close).not.toHaveBeenCalled()
+    manager.removeSocket(secondSocket.id)
+    expect(stream.unsubscribe).toHaveBeenCalledWith(['MESZ26'], 'quotes')
+    expect(stream.close).toHaveBeenCalled()
+  })
+
+  it('polls while the stream is down and stops once it reconnects', async () => {
+    vi.useFakeTimers()
+    const manager = new MarketStreamManager()
+    const socket = await subscribeMes(manager, 'socket-1', 'quote-1')
+    const stream = ibkrStreamInstances[0]
+
+    stream.handlers.onStatus({ state: 'disconnected', info: 'IBKR gateway session expired' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(buildMarketQuoteSnapshotMock).toHaveBeenCalledTimes(1)
+    expect(socket.emit).toHaveBeenCalledWith(
+      'market-quote-snapshot',
+      expect.objectContaining({ snapshot: streamedQuote })
+    )
+
+    stream.handlers.onStatus({ state: 'connected' })
+    buildMarketQuoteSnapshotMock.mockClear()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(buildMarketQuoteSnapshotMock).not.toHaveBeenCalled()
+
+    manager.removeSocket(socket.id)
+  })
+
+  it('polls instead of streaming when IBKR streaming is switched off', async () => {
+    vi.useFakeTimers()
+    isIbkrMarketStreamingEnabledMock.mockReturnValue(false)
+    const manager = new MarketStreamManager()
+    const socket = await subscribeMes(manager, 'socket-1', 'quote-1')
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(ibkrStreamInstances).toHaveLength(0)
+    expect(resolveIbkrStreamConidMock).not.toHaveBeenCalled()
+    expect(buildMarketQuoteSnapshotMock).toHaveBeenCalledTimes(1)
+
+    manager.removeSocket(socket.id)
   })
 })
