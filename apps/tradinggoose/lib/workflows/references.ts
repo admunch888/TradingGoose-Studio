@@ -47,7 +47,17 @@ export function extractReferencePrefixes(value: string): Array<{ raw: string; pr
     return []
   }
 
-  const matches = value.match(/<[^>]+>/g)
+  // `[^<>]` rather than `[^>]`: a less-than operator starts a match that would
+  // otherwise run past it and swallow the next real reference. In
+  //   <a.days> < 7 || <a.days> > 60
+  // the operator before `7` matched through to the second reference's closing
+  // `>`, so that reference was never offered on its own and stayed unresolved -
+  // and a condition block then failed on `Unexpected token '<'` at run time,
+  // after its gates had passed.
+  //
+  // isLikelyReferenceSegment rejects the bogus segment, but only after the scan
+  // has already consumed the real one.
+  const matches = value.match(/<[^<>]+>/g)
   if (!matches) {
     return []
   }
