@@ -22,7 +22,6 @@
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { callKronosForecast } from '@/lib/kronos'
 import {
   type ForecastScore,
   scoreForecast,
@@ -40,6 +39,46 @@ import {
   parseRunRecords,
   type RunRecord,
 } from '@/lib/kronos/backtest-driver'
+
+/**
+ * Posts to the Kronos service directly rather than through `lib/kronos`.
+ *
+ * The production image ships the source tree without node_modules, so importing
+ * the app client pulls in `types.ts` -> zod and the script cannot start inside
+ * the container it is meant to run in. The modules it does import
+ * (`backtest`, `backtest-driver`) have no package dependencies at all.
+ *
+ * This is the same request the app makes: POST /v1/forecast with a bearer token.
+ */
+async function requestForecast(
+  request: unknown,
+  timeoutMs: number
+): Promise<{ forecast: Array<{ close: number }> }> {
+  const url = (process.env.KRONOS_INTERNAL_URL || '').replace(/\/$/, '')
+  const token = process.env.KRONOS_INTERNAL_TOKEN
+  if (!url || !token) {
+    throw new Error(
+      'KRONOS_INTERNAL_URL and KRONOS_INTERNAL_TOKEN must be set. Run this inside the app container.'
+    )
+  }
+
+  const response = await fetch(`${url}/v1/forecast`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Kronos returned ${response.status}: ${(await response.text()).slice(0, 200)}`)
+  }
+
+  const body = (await response.json()) as { forecast?: unknown }
+  if (!Array.isArray(body.forecast)) {
+    throw new Error('Kronos response carried no forecast array')
+  }
+  return body as { forecast: Array<{ close: number }> }
+}
 
 const arg = (name: string, fallback?: string): string | undefined => {
   const index = process.argv.indexOf(`--${name}`)
@@ -66,6 +105,9 @@ const options = {
   topP: num('top-p', 0.9),
   out: arg('out', '/tmp/kronos-backtest.jsonl') as string,
   limit: num('limit', Number.POSITIVE_INFINITY),
+  // A CPU forecast of 512 bars takes tens of seconds; the app's default is far
+  // shorter than a backtest window needs.
+  timeoutMs: num('timeout-ms', 10 * 60 * 1000),
 }
 
 async function loadBars(): Promise<Bar[]> {
@@ -178,7 +220,7 @@ async function main() {
       ? existing
       : await (async () => {
           try {
-            const response = await callKronosForecast(
+            const response = await requestForecast(
               buildWindowRequest(window, {
                 listingId: options.symbol,
                 interval: options.interval,
@@ -186,7 +228,8 @@ async function main() {
                 temperature: options.temperature,
                 topP: options.topP,
                 sampleCount: options.samples,
-              }) as never
+              }),
+              options.timeoutMs
             )
             const next: RunRecord = {
               originIndex: window.originIndex,
