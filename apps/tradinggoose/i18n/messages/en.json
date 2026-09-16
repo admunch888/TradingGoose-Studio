@@ -20516,7 +20516,9 @@
         "createFailed": "The workflow could not be created. Try again.",
         "emptyImportFile": "The selected workflow file is empty.",
         "importFailed": "The workflow could not be imported. Check the file and try again.",
-        "importPartialFailed": "Imported {count} skills, but the workflow could not be created."
+        "importPartialFailed": "Imported {count} skills, but the workflow could not be created.",
+        "importSucceeded": "Imported \"{name}\".",
+        "importMoreProblems": "And {count} more problem(s) in the file."
       },
       "providerControls": {
         "marketSelector": {

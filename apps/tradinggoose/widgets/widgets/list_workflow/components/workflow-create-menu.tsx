@@ -4,6 +4,7 @@ import { useCallback, useId, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Download, Folder, Plus } from 'lucide-react'
 import { useMessages } from 'next-intl'
+import { toast } from 'sonner'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -129,12 +130,21 @@ export function DashboardWorkflowCreateMenu({
         const content = await file.text()
         if (!content.trim()) {
           setActionError(copy.emptyImportFile)
+          toast.error(copy.emptyImportFile)
           return
         }
 
         const parsedWorkflow = parseWorkflowJson(content, true)
         if (!parsedWorkflow.data || parsedWorkflow.errors.length > 0) {
-          setActionError(parsedWorkflow.errors[0] ?? copy.importFailed)
+          const [reason = copy.importFailed, ...rest] = parsedWorkflow.errors
+          setActionError(reason)
+          toast.error(reason, {
+            description:
+              rest.length > 0
+                ? formatTemplate(copy.importMoreProblems, { count: rest.length })
+                : undefined,
+            duration: 10_000,
+          })
           return
         }
 
@@ -164,14 +174,16 @@ export function DashboardWorkflowCreateMenu({
         })
 
         logger.info('Workflow imported successfully from dashboard widget')
+        toast.success(formatTemplate(copy.importSucceeded, { name: parsedWorkflow.data.name }))
         onWorkflowCreated?.(newWorkflowId)
       } catch (error) {
         logger.error('Failed to import workflow from dashboard widget:', { error })
-        setActionError(
+        const message =
           importedCount > 0
             ? formatTemplate(copy.importPartialFailed, { count: importedCount })
             : copy.importFailed
-        )
+        setActionError(message)
+        toast.error(message, { duration: 10_000 })
       } finally {
         finishAction()
         if (fileInputRef.current) fileInputRef.current.value = ''
