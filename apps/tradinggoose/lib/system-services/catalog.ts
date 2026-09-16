@@ -338,6 +338,13 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
         description: 'Optional bearer token for the endpoint, if it requires one.',
         required: false,
       },
+      {
+        key: 'copilotApiKey',
+        label: 'Copilot API Key',
+        description:
+          'Bearer token for the Copilot Base URL, when the Copilot uses a different host. Never shared with the endpoint above.',
+        required: false,
+      },
     ],
     settingFields: [
       {
@@ -345,6 +352,14 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
         label: 'Base URL',
         description:
           'Base URL of the OpenAI-compatible host, e.g. http://host:8080. Do not include a trailing /v1; the app appends it.',
+        type: 'url',
+        required: false,
+      },
+      {
+        key: 'copilotBaseUrl',
+        label: 'Copilot Base URL',
+        description:
+          'Optional. Points only the Copilot at a different OpenAI-compatible host, e.g. https://api.deepseek.com. Empty means the Copilot uses the endpoint above. Setting it leaves Agent blocks on the endpoint above, so changing the Copilot model cannot break a running workflow.',
         type: 'url',
         required: false,
       },

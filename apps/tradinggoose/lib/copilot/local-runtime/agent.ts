@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { resolveCopilotEndpoint } from '@/lib/copilot/local-runtime/endpoint'
 import { describeModelServerError } from '@/lib/copilot/local-runtime/model-server-error'
 import { buildLocalCopilotSystemPrompt } from '@/lib/copilot/local-runtime/prompt'
 import {
@@ -110,14 +111,13 @@ function buildOpenAiTools(
 }
 
 async function createLocalClient() {
-  const vllmConfig = await resolveVllmServiceConfig()
-  const baseUrl = (vllmConfig.baseUrl || '').replace(/\/$/, '')
-  if (!baseUrl) {
+  const endpoint = resolveCopilotEndpoint(await resolveVllmServiceConfig())
+  if (!endpoint) {
     throw new Error('vLLM service is not configured (missing baseUrl)')
   }
   return new OpenAI({
-    baseURL: `${baseUrl}/v1`,
-    apiKey: vllmConfig.apiKey || 'empty',
+    baseURL: `${endpoint.baseUrl}/v1`,
+    apiKey: endpoint.apiKey || 'empty',
     timeout: 10 * 60 * 1000,
   })
 }

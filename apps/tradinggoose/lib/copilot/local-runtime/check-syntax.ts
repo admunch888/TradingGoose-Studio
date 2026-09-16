@@ -8,7 +8,7 @@
 // Usage: bun check-syntax.ts <app-dir>
 // Exits non-zero and prints the offending files on failure.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const appDir = process.argv[2]
