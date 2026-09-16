@@ -20503,7 +20503,9 @@
         "createFailed": "无法创建工作流，请重试。",
         "emptyImportFile": "所选工作流文件为空。",
         "importFailed": "无法导入工作流。请检查文件后重试。",
-        "importPartialFailed": "已导入 {count} 个 skills，但无法创建工作流。"
+        "importPartialFailed": "已导入 {count} 个 skills，但无法创建工作流。",
+        "importSucceeded": "已导入“{name}”。",
+        "importMoreProblems": "文件中还有 {count} 个问题。"
       },
       "providerControls": {
         "marketSelector": {

@@ -20516,7 +20516,9 @@
         "createFailed": "No se pudo crear el flujo. Inténtalo de nuevo.",
         "emptyImportFile": "El archivo de flujo seleccionado está vacío.",
         "importFailed": "No se pudo importar el flujo. Revisa el archivo e inténtalo de nuevo.",
-        "importPartialFailed": "Se importaron {count} skills, pero no se pudo crear el flujo."
+        "importPartialFailed": "Se importaron {count} skills, pero no se pudo crear el flujo.",
+        "importSucceeded": "Se importó \"{name}\".",
+        "importMoreProblems": "Y {count} problema(s) más en el archivo."
       },
       "providerControls": {
         "marketSelector": {
