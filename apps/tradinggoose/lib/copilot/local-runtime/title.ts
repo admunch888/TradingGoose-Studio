@@ -1,11 +1,8 @@
 import OpenAI from 'openai'
+import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
+import { TITLE_GENERATION_SYSTEM_PROMPT, TITLE_GENERATION_USER_PROMPT } from '@/lib/copilot/prompts'
 import { createLogger } from '@/lib/logs/console/logger'
 import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
-import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-models'
-import {
-  TITLE_GENERATION_SYSTEM_PROMPT,
-  TITLE_GENERATION_USER_PROMPT,
-} from '@/lib/copilot/prompts'
 
 const logger = createLogger('LocalCopilotTitle')
 

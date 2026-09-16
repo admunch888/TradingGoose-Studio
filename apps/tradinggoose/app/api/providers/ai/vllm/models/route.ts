@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { resolveCopilotEndpoint } from '@/lib/copilot/local-runtime/endpoint'
 import { createLogger } from '@/lib/logs/console/logger'
 import { resolveVllmServiceConfig } from '@/lib/system-services/runtime'
 import { filterBlacklistedModels } from '@/providers/ai/utils'
@@ -7,20 +8,29 @@ const logger = createLogger('VLLMModelsAPI')
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const config = await resolveVllmServiceConfig()
-    const baseUrl = (config.baseUrl || '').replace(/\/$/, '')
 
-    if (!baseUrl) {
+    // The Copilot may be pointed at a different host than the Agent blocks, and
+    // must then offer that host's models rather than the shared endpoint's.
+    const forCopilot = new URL(request.url).searchParams.get('for') === 'copilot'
+    const endpoint = forCopilot
+      ? resolveCopilotEndpoint(config)
+      : config.baseUrl
+        ? { baseUrl: config.baseUrl.replace(/\/$/, ''), apiKey: config.apiKey ?? '' }
+        : null
+
+    if (!endpoint) {
       logger.info('vLLM base URL not configured')
       return NextResponse.json({ models: [] })
     }
+    const { baseUrl } = endpoint
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     }
-    const apiKey = config.apiKey
+    const apiKey = endpoint.apiKey
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`
     }

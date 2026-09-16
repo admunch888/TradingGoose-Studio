@@ -55,17 +55,18 @@ export async function executeLocalCopilotServerTool(params: {
   const toolId = toolName as never
 
   const { routeExecution } = await import('@/lib/copilot/tools/server/router')
-  const {
-    acceptServerManagedToolReview,
-    stageServerManagedToolReview,
-  } = await import('@/lib/copilot/tools/server/review-acceptance')
+  const { acceptServerManagedToolReview, stageServerManagedToolReview } = await import(
+    '@/lib/copilot/tools/server/review-acceptance'
+  )
 
   const executionContext = {
     userId,
     // Default 'full', never 'limited': this executor only ever runs in-process from
     // the local agent (agent.ts), where nothing can accept a staged review.
     accessLevel: (context?.accessLevel ?? 'full') as 'limited' | 'full',
-    ...(context?.contextEntityKind ? { contextEntityKind: context.contextEntityKind as never } : {}),
+    ...(context?.contextEntityKind
+      ? { contextEntityKind: context.contextEntityKind as never }
+      : {}),
     ...(context?.contextEntityId ? { contextEntityId: context.contextEntityId } : {}),
     ...(context?.workspaceId ? { workspaceId: context.workspaceId } : {}),
     signal: context?.signal,
@@ -80,9 +81,11 @@ export async function executeLocalCopilotServerTool(params: {
       result = await stageServerManagedToolReview(toolId, payload, executed, executionContext)
     }
 
-    const maybeReview = result as
-      | { requiresReview?: boolean; reviewToken?: string; reviewBaseStateHash?: unknown }
-      | null
+    const maybeReview = result as {
+      requiresReview?: boolean
+      reviewToken?: string
+      reviewBaseStateHash?: unknown
+    } | null
     if (maybeReview && maybeReview.requiresReview === true && maybeReview.reviewToken) {
       // A staged mutation: nothing has been written yet, and only an accepted
       // review will write it. The caller (agent.ts) forwards the token on the
@@ -94,12 +97,16 @@ export async function executeLocalCopilotServerTool(params: {
       // Read the token through the narrowed property: destructuring it from a
       // cast left it `string | undefined` even under the guard above.
       const reviewToken = maybeReview.reviewToken
-      const { requiresReview: _r, reviewToken: _t, reviewBaseStateHash: _h, ...rest } =
-        maybeReview as Record<string, unknown> & {
-          requiresReview?: boolean
-          reviewToken?: string
-          reviewBaseStateHash?: unknown
-        }
+      const {
+        requiresReview: _r,
+        reviewToken: _t,
+        reviewBaseStateHash: _h,
+        ...rest
+      } = maybeReview as Record<string, unknown> & {
+        requiresReview?: boolean
+        reviewToken?: string
+        reviewBaseStateHash?: unknown
+      }
       return {
         success: true,
         result: rest,

@@ -11,7 +11,7 @@ export const LOCAL_COPILOT_MODEL_PREFIX = 'vllm/'
  */
 export async function getCopilotLocalRuntimeModels(): Promise<string[]> {
   try {
-    const res = await fetch('/api/providers/ai/vllm/models', { cache: 'no-store' })
+    const res = await fetch('/api/providers/ai/vllm/models?for=copilot', { cache: 'no-store' })
     if (!res.ok) return []
     const data = (await res.json()) as { models?: unknown }
     if (!Array.isArray(data.models)) return []

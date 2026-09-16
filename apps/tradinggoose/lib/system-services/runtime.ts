@@ -141,6 +141,8 @@ export const isOllamaServiceConfigured = (): Promise<boolean> =>
 
 export const resolveVllmServiceConfig = createServiceResolver('vllm', (config) => ({
   ...readApiKeyAndBaseUrlConfig(config),
+  copilotBaseUrl: asString(config.copilotBaseUrl),
+  copilotApiKey: asString(config.copilotApiKey),
   copilotContextWindow: asNumber(config.copilotContextWindow),
   copilotMaxToolIterations: asNumber(config.copilotMaxToolIterations),
   copilotTemperature: asNumber(config.copilotTemperature),
