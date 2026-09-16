@@ -1,4 +1,7 @@
-import { COPILOT_API_URL_DEFAULT, COPILOT_API_VERSION } from '@/lib/copilot/agent/constants'
+import {
+  COPILOT_API_NOT_CONFIGURED_MESSAGE,
+  COPILOT_API_VERSION,
+} from '@/lib/copilot/agent/constants'
 import { resolveCopilotApiServiceConfig } from '@/lib/system-services/runtime'
 
 const COMPLETION_API_VERSION = 'v1'
@@ -43,7 +46,9 @@ async function createRequestInit(
 
 export async function getCopilotApiUrl(endpoint: string, query?: CopilotQuery) {
   const copilotApi = await resolveCopilotApiServiceConfig()
-  const url = new URL(endpoint, copilotApi.baseUrl || COPILOT_API_URL_DEFAULT)
+  const baseUrl = copilotApi.baseUrl?.trim()
+  if (!baseUrl) throw new Error(COPILOT_API_NOT_CONFIGURED_MESSAGE)
+  const url = new URL(endpoint, baseUrl)
   for (const [key, value] of Object.entries(query || {})) {
     if (value === undefined || value === null || value === '') continue
     url.searchParams.set(key, String(value))
