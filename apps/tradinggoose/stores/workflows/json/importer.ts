@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { createLogger } from '@/lib/logs/console/logger'
+import { checkWorkflowGraphIntegrity } from '@/lib/workflows/graph-integrity'
 import {
   parseImportedWorkflowFile,
   type WorkflowTransferRecord,
@@ -7,6 +8,63 @@ import {
 
 const logger = createLogger('WorkflowJsonImporter')
 type ImportedWorkflowState = WorkflowTransferRecord['state']
+
+const CONDITION_HANDLE_PREFIX = 'condition-'
+
+/**
+ * Rewrite `<oldBlockId>-<branch>` to `<newBlockId>-<branch>`.
+ *
+ * A condition branch is identified by the block it belongs to, so its id has to
+ * move with the block. The branch key itself contains dashes
+ * (`else-if-1752111795510`), so the old id is removed by prefix rather than by
+ * splitting.
+ */
+const remapConditionEntryId = (entryId: string, blockIdMap: Map<string, string>): string => {
+  for (const [oldId, newId] of blockIdMap) {
+    const prefix = `${oldId}-`
+    if (entryId.startsWith(prefix)) return `${newId}-${entryId.slice(prefix.length)}`
+  }
+  return entryId
+}
+
+/** The same rewrite for an edge's `condition-<blockId>-<branch>` handle. */
+const remapSourceHandle = (
+  sourceHandle: string | null | undefined,
+  blockIdMap: Map<string, string>
+): string | null | undefined => {
+  if (!sourceHandle?.startsWith(CONDITION_HANDLE_PREFIX)) return sourceHandle
+  const entryId = sourceHandle.slice(CONDITION_HANDLE_PREFIX.length)
+  return `${CONDITION_HANDLE_PREFIX}${remapConditionEntryId(entryId, blockIdMap)}`
+}
+
+/**
+ * Renumber the ids inside a condition block's `conditions` value.
+ *
+ * Normally the array of entries; it has also been seen double-encoded as a JSON
+ * string holding that array, so both are handled and the shape is preserved.
+ */
+const remapConditionEntries = <Value>(value: Value, blockIdMap: Map<string, string>): Value => {
+  const remapArray = (entries: unknown[]): unknown[] =>
+    entries.map((entry) => {
+      if (!entry || typeof entry !== 'object') return entry
+      const { id } = entry as { id?: unknown }
+      if (typeof id !== 'string') return entry
+      return { ...entry, id: remapConditionEntryId(id, blockIdMap) }
+    })
+
+  if (Array.isArray(value)) return remapArray(value) as Value
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) return JSON.stringify(remapArray(parsed)) as Value
+    } catch {
+      // Not JSON: leave it exactly as it was rather than guess at its shape.
+    }
+  }
+
+  return value
+}
 
 /**
  * Generate new IDs for all blocks and edges to avoid conflicts
@@ -31,6 +89,12 @@ function regenerateIds(workflowState: ImportedWorkflowState): ImportedWorkflowSt
     id: uuidv4(), // Generate new edge ID
     source: blockIdMap.get(edge.source) || edge.source,
     target: blockIdMap.get(edge.target) || edge.target,
+    // `condition-<blockId>-<branch>` names the block it leaves. Left alone it
+    // points at an id that no longer exists once the block is renumbered, and
+    // the branch silently stops resolving.
+    ...(edge.sourceHandle === undefined
+      ? {}
+      : { sourceHandle: remapSourceHandle(edge.sourceHandle, blockIdMap) }),
   }))
 
   // Third pass: update loops with new block IDs
@@ -66,7 +130,19 @@ function regenerateIds(workflowState: ImportedWorkflowState): ImportedWorkflowSt
   // Fifth pass: update any block references in subblock values
   Object.entries(newBlocks).forEach(([blockId, block]) => {
     if (block.subBlocks) {
+      // A condition block declares its branches as `<blockId>-<branch>`, and the
+      // edges leaving it name those ids. Both have to be renumbered together or
+      // the branches stop matching their edges.
+      const conditions = block.subBlocks.conditions
+      if (conditions?.value !== undefined && conditions.value !== null) {
+        block.subBlocks.conditions = {
+          ...conditions,
+          value: remapConditionEntries(conditions.value, blockIdMap),
+        }
+      }
+
       Object.entries(block.subBlocks).forEach(([subBlockId, subBlock]) => {
+        if (subBlockId === 'conditions') return
         if (subBlock.value && typeof subBlock.value === 'string') {
           // Replace any block references in the value
           let updatedValue = subBlock.value
@@ -151,6 +227,21 @@ export function parseWorkflowJson(
         state: regenerateIds(workflowData.state),
       }
       logger.info('Regenerated IDs for imported workflow to avoid conflicts')
+
+      // The file was already checked before renumbering. Checking again after it
+      // is what catches a reference the renumbering missed - which is how a
+      // condition branch came to point at a block id that no longer existed,
+      // importing cleanly and then failing to open in the editor.
+      const { errors: renumberErrors } = checkWorkflowGraphIntegrity(workflowData.state)
+      if (renumberErrors.length > 0) {
+        logger.error('Renumbering produced an inconsistent workflow', { errors: renumberErrors })
+        return {
+          data: null,
+          errors: renumberErrors.map(
+            (error) => `The workflow could not be renumbered on import: ${error}`
+          ),
+        }
+      }
     }
 
     logger.info('Successfully parsed workflow JSON', {
