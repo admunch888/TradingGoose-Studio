@@ -1,9 +1,19 @@
-import { COPILOT_API_URL_DEFAULT, COPILOT_API_VERSION } from '@/lib/copilot/agent/constants'
+import {
+  COPILOT_API_NOT_CONFIGURED_MESSAGE,
+  COPILOT_API_VERSION,
+} from '@/lib/copilot/agent/constants'
 import { createLogger } from '@/lib/logs/console/logger'
 import { resolveCopilotApiServiceConfig } from '@/lib/system-services/runtime'
 import { generateRequestId } from '@/lib/utils'
 
 const logger = createLogger('SimAgentClient')
+
+export class CopilotApiNotConfiguredError extends Error {
+  constructor() {
+    super(COPILOT_API_NOT_CONFIGURED_MESSAGE)
+    this.name = 'CopilotApiNotConfiguredError'
+  }
+}
 
 export interface SimAgentRequest {
   workflowId: string
@@ -21,7 +31,11 @@ export interface SimAgentResponse<T = any> {
 class SimAgentClient {
   private async getBaseUrl() {
     const config = await resolveCopilotApiServiceConfig()
-    return config.baseUrl || COPILOT_API_URL_DEFAULT
+    const baseUrl = config.baseUrl?.trim()
+    // No fallback: an unconfigured deployment must not reach a host it does not
+    // run, so the request never leaves the process.
+    if (!baseUrl) throw new CopilotApiNotConfiguredError()
+    return baseUrl
   }
 
   /**
@@ -103,6 +117,12 @@ class SimAgentClient {
         status: responseStatus,
       }
     } catch (fetchError) {
+      // Not configured is not a connection failure - nothing was sent anywhere,
+      // and labelling it as one sends people looking at the network.
+      if (fetchError instanceof CopilotApiNotConfiguredError) {
+        logger.warn(`[${requestId}] Request skipped: no copilot service configured`)
+        return { success: false, error: fetchError.message, status: 0 }
+      }
       logger.error(`[${requestId}] Request failed`, fetchError)
       return {
         success: false,

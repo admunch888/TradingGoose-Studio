@@ -1,4 +1,3 @@
-import { COPILOT_API_URL_DEFAULT } from '@/lib/copilot/agent/constants'
 import { MARKET_API_URL_DEFAULT } from '@/lib/market/client/constants'
 
 export type SystemServiceSettingFieldType = 'text' | 'url' | 'number' | 'boolean'
@@ -284,9 +283,9 @@ export const SYSTEM_SERVICE_DEFINITIONS: SystemServiceDefinition[] = [
       {
         key: 'baseUrl',
         label: 'Base URL',
-        description: 'Base URL for the remote Copilot service.',
+        description:
+          'Base URL for the remote Copilot service. Leave empty unless you run one: with no URL, nothing is sent.',
         type: 'url',
-        defaultValue: COPILOT_API_URL_DEFAULT,
       },
     ],
   },
