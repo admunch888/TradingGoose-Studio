@@ -8,6 +8,12 @@ import type {
 } from '@/providers/market/types'
 import { resolveListingContext, resolveProviderSymbol } from '@/providers/market/utils'
 import { YahooFinanceProviderConfig } from '@/providers/market/yahoo-finance/config'
+import {
+  isRetryableStatus,
+  parseRetryAfter,
+  YahooRateLimitError,
+  yahooRequestPolicy,
+} from '@/providers/market/yahoo-finance/request-policy'
 
 const logger = createLogger('MarketProvider:YFinance')
 
@@ -122,19 +128,30 @@ export async function fetchYahooFinanceSeries(request: MarketSeriesRequest): Pro
     end: request.end,
   })
 
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0',
-      Accept: 'application/json',
-    },
+  // Keyed by URL, so two widgets showing the same symbol and range share one
+  // request rather than racing each other into Yahoo's rate limiter.
+  const payload = await yahooRequestPolicy.run(url, async (signal) => {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'application/json',
+      },
+      signal,
+    })
+
+    if (!response.ok) {
+      if (isRetryableStatus(response.status)) {
+        throw new YahooRateLimitError(
+          response.status,
+          parseRetryAfter(response.headers.get('retry-after'))
+        )
+      }
+      const errorText = await response.text().catch(() => '')
+      throw new Error(errorText || `Yahoo Finance request failed with status ${response.status}`)
+    }
+
+    return (await response.json()) as any
   })
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '')
-    throw new Error(errorText || `Yahoo Finance request failed with status ${response.status}`)
-  }
-
-  const payload = (await response.json()) as any
   const result = payload?.chart?.result?.[0]
   const error = payload?.chart?.error
 
