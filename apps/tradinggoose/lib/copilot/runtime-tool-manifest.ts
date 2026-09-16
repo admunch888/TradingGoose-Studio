@@ -45,6 +45,19 @@ const buildToolParameterSchema = (toolId: ToolId): Record<string, unknown> => {
   }
 
   const { $schema, definitions, $defs, ...parameters } = schema as Record<string, unknown>
+
+  // A tool whose arguments are a discriminated union emits `oneOf` with no
+  // `type`, and an OpenAI-compatible API requires function parameters to be
+  // `type: "object"`. Servers differ on whether they check: SGLang accepts it,
+  // and a strict one refuses the whole request - every tool, not just this one -
+  // with "schema must be a JSON Schema of 'type: object', got 'type: null'".
+  //
+  // Every branch of those unions is an object, so declaring it here is what the
+  // schema already meant.
+  if (parameters.type === undefined) {
+    return { type: 'object', ...parameters }
+  }
+
   return parameters
 }
 
