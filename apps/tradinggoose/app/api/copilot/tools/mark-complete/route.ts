@@ -22,7 +22,7 @@ import { REVIEW_ENTITY_KINDS, type ReviewEntityKind } from '@/lib/copilot/review
 import { COPILOT_SESSION_KIND } from '@/lib/copilot/session-scope'
 import { createLogger } from '@/lib/logs/console/logger'
 import { encodeSSE, SSE_HEADERS } from '@/lib/utils'
-import { getCopilotApiUrl, proxyCopilotRequest } from '@/app/api/copilot/proxy'
+import { proxyCopilotRequest } from '@/app/api/copilot/proxy'
 
 const logger = createLogger('CopilotMarkToolCompleteAPI')
 const DATA_PREFIX = 'data: '
@@ -193,6 +193,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const parsed = MarkCompleteSchema.parse(body)
 
+    // Deliberately no agentUrl here. Resolving it only to decorate a log field
+    // ran before the local/hosted branch below, and it throws when no remote
+    // Copilot service is configured - so on a self-hosted deployment every
+    // mark-complete failed here, including local turns that never wanted the
+    // remote service at all. The panel showed "Finished planning" and stopped,
+    // and the error named a service the deployment does not run.
+    //
+    // The hosted branch resolves the URL itself when it actually proxies.
     logger.info(`[${tracker.requestId}] Forwarding tool mark-complete`, {
       userId,
       toolCallId: parsed.id,
@@ -200,7 +208,7 @@ export async function POST(req: NextRequest) {
       status: parsed.status,
       hasMessage: parsed.message !== undefined,
       hasData: parsed.data !== undefined,
-      agentUrl: await getCopilotApiUrl('/api/tools/mark-complete'),
+      isLocal: Boolean(parsed.data?.local),
     })
 
     if (!parsed.data?.local) {

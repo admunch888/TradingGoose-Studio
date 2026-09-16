@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { getSession } from '@/lib/auth'
 import { isBillingEnabledForRuntime } from '@/lib/billing/settings'
 import { recordCopilotCompletionUsage } from '@/lib/copilot/completion-usage-billing'
-import { COPILOT_RUNTIME_MODELS } from '@/lib/copilot/runtime-models'
 import {
   commitCopilotUsageReservation,
   releaseCopilotUsageReservation,
@@ -11,7 +10,7 @@ import {
 } from '@/lib/copilot/usage-reservations'
 import { checkInternalApiKey } from '@/lib/copilot/utils'
 import { createLogger } from '@/lib/logs/console/logger'
-import { getCopilotApiUrl, proxyCopilotRequest } from '@/app/api/copilot/proxy'
+import { proxyCopilotRequest } from '@/app/api/copilot/proxy'
 
 const BILLING_DISABLED_RESERVATION_ID = 'billing-disabled'
 const logger = createLogger('CopilotUsageAPI')
@@ -65,8 +64,10 @@ async function fetchContextUsageFromCopilot(params: {
     ...(workspaceId ? { workspaceId } : {}),
   }
 
+  // No URL in the log field: resolving it throws when no remote Copilot service
+  // is configured, which turned a clear "not configured" from the proxy below
+  // into an opaque failure here. proxyCopilotRequest resolves it itself.
   logger.info('[Usage API] Calling copilot for context usage', {
-    url: await getCopilotApiUrl('/api/get-context-usage'),
     payload: requestPayload,
   })
 
