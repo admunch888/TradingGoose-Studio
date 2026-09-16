@@ -1,6 +1,7 @@
 import type React from 'react'
 import { NextIntlClientProvider } from 'next-intl'
 import { getSystemAdminAccess } from '@/lib/admin/access'
+import { isCopilotEnabled } from '@/lib/copilot/feature-flag'
 import WorkspaceLayoutClient from '@/app/workspace/layout-client'
 import { GlobalNavbar } from '@/global-navbar'
 import { getClientMessages } from '@/i18n/public-copy'
@@ -20,6 +21,7 @@ export default async function WorkspaceRootLayout({
     <NextIntlClientProvider locale={locale} messages={getClientMessages(locale, 'workspace')}>
       <WorkspaceLayoutClient>
         <GlobalNavbar
+          copilotEnabled={isCopilotEnabled()}
           isSystemAdmin={access.isSystemAdmin}
           workspaceUser={
             access.userId

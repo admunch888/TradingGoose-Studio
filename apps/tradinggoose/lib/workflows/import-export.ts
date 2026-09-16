@@ -10,6 +10,7 @@ import {
   SkillTransferSchema,
 } from '@/lib/skills/import-export'
 import type { SkillDefinition } from '@/lib/skills/types'
+import { checkWorkflowGraphIntegrity } from '@/lib/workflows/graph-integrity'
 import { type ExportWorkflowState, sanitizeForExport } from '@/lib/workflows/json-sanitizer'
 import { normalizeVariables } from '@/lib/workflows/variable-utils'
 import type { Variable } from '@/stores/variables/types'
@@ -195,6 +196,16 @@ function validateWorkflowState(input: unknown): {
 
   if (stateValidationFailures.length > 0) {
     return { data: null, errors: stateValidationFailures }
+  }
+
+  // Shape is sound, so the graph can be walked. This is what catches an edit made
+  // outside the app that imports cleanly and then silently never runs a block.
+  const integrity = checkWorkflowGraphIntegrity({
+    blocks: workflowState.blocks,
+    edges: workflowState.edges,
+  })
+  if (integrity.errors.length > 0) {
+    return { data: null, errors: integrity.errors }
   }
 
   return {

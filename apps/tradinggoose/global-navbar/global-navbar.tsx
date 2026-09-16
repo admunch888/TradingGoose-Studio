@@ -42,9 +42,12 @@ export function GlobalNavbar({
   isSystemAdmin = false,
   workspaceUser = null,
   navigationMode = 'workspace',
+  copilotEnabled = true,
 }: {
   children: React.ReactNode
   isSystemAdmin?: boolean
+  /** False turns the Copilot off entirely: no toggle, no panel, no store. */
+  copilotEnabled?: boolean
   workspaceUser?: { id: string; email: string | null } | null
   navigationMode?: 'workspace' | 'admin'
 }) {
@@ -276,7 +279,7 @@ export function GlobalNavbar({
               <SidebarNav navItems={navMain} />
             </SidebarContent>
             <SidebarFooter className='flex flex-col gap-2 px-2 py-3'>
-              {workspaceId && navigationMode === 'workspace' ? (
+              {copilotEnabled && workspaceId && navigationMode === 'workspace' ? (
                 <CopilotSidebarToggle open={isCopilotOpen} onOpenChange={setIsCopilotOpen} />
               ) : null}
               <SidebarUsageIndicator
@@ -307,7 +310,7 @@ export function GlobalNavbar({
                 pageIcon={activeNavItem?.icon}
               />
               <div className='flex min-h-0 flex-1 overflow-hidden'>
-                {workspaceId && navigationMode === 'workspace' && userId ? (
+                {copilotEnabled && workspaceId && navigationMode === 'workspace' && userId ? (
                   <GlobalCopilotLayout
                     workspaceId={workspaceId}
                     ownerUserId={userId}
