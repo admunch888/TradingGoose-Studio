@@ -1,15 +1,14 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { simAgentClient } from '@/lib/copilot/agent/client'
 import { extractSubBlockValuesFromBlocks } from '@/lib/copilot/workflow/block-output-utils'
 import { createLogger } from '@/lib/logs/console/logger'
 import { generateRequestId } from '@/lib/utils'
 import { requireWorkflowRealtimeState } from '@/lib/workflows/db-helpers'
 import { validateWorkflowPermissions } from '@/lib/workflows/utils'
 import { createWorkflowRealtimeRequiredResponse } from '@/app/api/workflows/utils'
-import { getAllBlocks } from '@/blocks/registry'
-import type { BlockConfig } from '@/blocks/types'
-import { resolveOutputType } from '@/blocks/utils'
-import { generateLoopBlocks, generateParallelBlocks } from '@/stores/workflows/workflow/utils'
+import {
+  exportWorkflowAsYaml,
+  findMismatchedConditionEdges,
+} from '@/stores/workflows/yaml/exporter'
 
 const logger = createLogger('WorkflowYamlExportAPI')
 
@@ -95,53 +94,24 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Gather block registry and utilities for copilot
-    const blocks = getAllBlocks()
-    const blockRegistry = blocks.reduce(
-      (acc, block) => {
-        const blockType = block.type
-        acc[blockType] = {
-          ...block,
-          id: blockType,
-          subBlocks: block.subBlocks || [],
-          outputs: block.outputs || {},
-        } as any
-        return acc
-      },
-      {} as Record<string, BlockConfig>
-    )
-
-    // Call copilot directly
-    const result = await simAgentClient.makeRequest('/api/workflow/to-yaml', {
-      body: {
-        workflowState,
-        subBlockValues,
-        blockRegistry,
-        utilities: {
-          generateLoopBlocks: generateLoopBlocks.toString(),
-          generateParallelBlocks: generateParallelBlocks.toString(),
-          resolveOutputType: resolveOutputType.toString(),
-        },
-      },
-    })
-
-    if (!result.success || !result.data?.yaml) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: result.error || 'Failed to generate YAML',
-        },
-        { status: result.status || 500 }
-      )
+    // Converted in process. This used to post workflowState and subBlockValues -
+    // system prompts, condition expressions, function source - to a remote
+    // service, along with local functions serialised as strings for it to run.
+    const mismatchedConditionEdges = findMismatchedConditionEdges(workflowState)
+    if (mismatchedConditionEdges.length > 0) {
+      logger.warn(`[${requestId}] Dropping condition edges that name another block`, {
+        edges: mismatchedConditionEdges,
+      })
     }
+    const yaml = exportWorkflowAsYaml(workflowState, subBlockValues)
 
     logger.info(`[${requestId}] Successfully generated YAML from workflow state`, {
-      yamlLength: result.data.yaml.length,
+      yamlLength: yaml.length,
     })
 
     return NextResponse.json({
       success: true,
-      yaml: result.data.yaml,
+      yaml,
     })
   } catch (error) {
     logger.error(`[${requestId}] YAML export failed`, error)

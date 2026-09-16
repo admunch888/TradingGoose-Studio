@@ -27,10 +27,8 @@ describe('Workflow YAML Export API Route', () => {
       error: null,
       workflow: workflowRow,
     })
-    makeRequestMock = vi.fn().mockResolvedValue({
-      success: true,
-      data: { yaml: 'name: exported' },
-    })
+    // Kept mocked so the test can assert the route never reaches for it.
+    makeRequestMock = vi.fn()
 
     vi.doMock('@/lib/workflows/utils', () => ({
       validateWorkflowPermissions: validateWorkflowPermissionsMock,
@@ -151,29 +149,14 @@ describe('Workflow YAML Export API Route', () => {
         'read'
       )
       expect(loadWorkflowStateMock).toHaveBeenCalledWith('workflow-id')
-      expect(makeRequestMock).toHaveBeenCalledWith(
-        '/api/workflow/to-yaml',
-        expect.objectContaining({
-          body: expect.objectContaining({
-            workflowState: expect.objectContaining({
-              blocks: expect.objectContaining({
-                'live-block': expect.objectContaining({ name: 'Live Agent' }),
-              }),
-              variables: {
-                'live-var': expect.objectContaining({
-                  name: 'liveVar',
-                  value: 'live',
-                }),
-              },
-            }),
-            subBlockValues: {
-              'live-block': {
-                prompt: 'live value',
-              },
-            },
-          }),
-        })
-      )
+
+      // Converted in process: nothing is sent to the copilot service, and the
+      // live block state and its subBlock values both reach the YAML.
+      expect(makeRequestMock).not.toHaveBeenCalled()
+
+      const { yaml } = await response.json()
+      expect(yaml).toContain('name: Live Agent')
+      expect(yaml).toContain('prompt: live value')
     }
   )
 })
