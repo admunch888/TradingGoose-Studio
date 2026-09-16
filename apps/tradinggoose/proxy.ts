@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import createMiddleware from 'next-intl/middleware'
+import { COPILOT_DISABLED_MESSAGE, isCopilotEnabled } from '@/lib/copilot/feature-flag'
 import { appendHomepageDiscoveryLinks } from '@/lib/discovery/link-headers'
 import {
   appendVaryHeader,
@@ -289,7 +290,28 @@ function handleSecurityFiltering(request: NextRequest): NextResponse | null {
   return null
 }
 
+/**
+ * Closes the Copilot's API surface when an operator has switched it off.
+ *
+ * The layout already stops rendering the panel; this is the other half, so a
+ * stale tab or a bookmarked URL cannot keep driving it. Gated here rather than in
+ * each of the twelve route files, so a route added later is covered too.
+ *
+ * The Copilot takes no part in running a deployed workflow, so this cannot affect
+ * an execution.
+ */
+function blockDisabledCopilot(request: NextRequest): NextResponse | null {
+  const { pathname } = request.nextUrl
+  if (pathname !== '/api/copilot' && !pathname.startsWith('/api/copilot/')) return null
+  if (isCopilotEnabled()) return null
+
+  return NextResponse.json({ error: COPILOT_DISABLED_MESSAGE }, { status: 404 })
+}
+
 export async function proxy(request: NextRequest) {
+  const copilotBlock = blockDisabledCopilot(request)
+  if (copilotBlock) return copilotBlock
+
   const url = request.nextUrl
   const initialRoute = resolveLocaleRoute(url.pathname)
   const route = resolveCanonicalLocaleRoute(request, initialRoute)
