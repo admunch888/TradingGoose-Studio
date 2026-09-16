@@ -11,6 +11,7 @@ import {
   type ForecastScore,
   scoreForecast,
   sliceBacktestWindows,
+  smallestDetectableHitRate,
   summariseForecastScores,
   wilsonInterval,
 } from '@/lib/kronos/backtest'
@@ -211,5 +212,28 @@ describe('slicing a series into windows', () => {
     ['a zero step', { contextBars: 5, horizonBars: 3, step: 0 }],
   ])('yields nothing for %s', (_label, options) => {
     expect([...sliceBacktestWindows(bars, options)]).toEqual([])
+  })
+})
+
+describe('the smallest edge a run could detect', () => {
+  it('needs a bigger sample to resolve a smaller edge', () => {
+    const small = smallestDetectableHitRate(100)
+    const large = smallestDetectableHitRate(4000)
+
+    expect(small).not.toBeNull()
+    expect(large).not.toBeNull()
+    expect(large as number).toBeLessThan(small as number)
+  })
+
+  it('agrees with the interval it is derived from', () => {
+    // Whatever it reports must actually clear a coin toss at that sample size.
+    for (const n of [100, 993, 1986, 3971]) {
+      const rate = smallestDetectableHitRate(n) as number
+      expect(wilsonInterval(Math.round(n * rate), n).low).toBeGreaterThan(0.5)
+    }
+  })
+
+  it('is nothing with no observations', () => {
+    expect(smallestDetectableHitRate(0)).toBeNull()
   })
 })

@@ -183,6 +183,25 @@ export const summariseForecastScores = (scores: ForecastScore[]): ForecastScoreS
   }
 }
 
+/**
+ * The smallest hit rate this many forecasts could show to be better than chance.
+ *
+ * Reported alongside a result that does not clear it, because "54%" is a
+ * property of the sample size, not a constant: MES on Globex yields far more
+ * windows than a regular-hours instrument, and stepping through them changes it
+ * again. Quoting a fixed number would be wrong for most runs.
+ */
+export const smallestDetectableHitRate = (evaluated: number): number | null => {
+  if (evaluated <= 0) return null
+
+  for (let rate = 0.5; rate <= 0.75; rate += 0.005) {
+    if (wilsonInterval(Math.round(evaluated * rate), evaluated).low > 0.5) {
+      return Math.round(rate * 1000) / 1000
+    }
+  }
+  return null
+}
+
 export interface BacktestWindow<Bar> {
   /** Bars the model is allowed to see. */
   context: Bar[]
