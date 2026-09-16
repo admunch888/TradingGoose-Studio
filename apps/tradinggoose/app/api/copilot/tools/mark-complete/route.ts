@@ -244,6 +244,24 @@ export async function POST(req: NextRequest) {
           ? toLocalRuntimeModelName(storedModel)
           : null
 
+      // Falling through to the proxy is how a local turn dies: the browser ran
+      // the tool, the server declined to resume, and the only trace was a proxy
+      // error naming a service the deployment never configured. Say which
+      // condition failed, at error level, because in production nothing below
+      // that is emitted.
+      if (!sessionModel) {
+        logger.error(`[${tracker.requestId}] Local continuation not resumed`, {
+          toolName: parsed.name,
+          hasReviewSessionId: Boolean(reviewSessionId),
+          sessionFound: Boolean(ownedSession),
+          storedModel: ownedSession?.model ?? null,
+          modelIsLocal: ownedSession?.model
+            ? isCopilotLocalRuntimeModel(ownedSession.model)
+            : false,
+          sessionHasLocalItems: ownedSession ? await isLocalReviewSession(ownedSession.id) : false,
+        })
+      }
+
       if (reviewSessionId && sessionModel) {
         await persistLocalContinuation({
           reviewSessionId,
