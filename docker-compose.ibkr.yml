@@ -1,0 +1,105 @@
+# Copy of docker-compose.yml for IBKR (Interactive Brokers) integration.
+# Exposes IBKR-related env vars and the app socket URL for the app container.
+
+name: tradinggoose
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2.1-alpine
+    restart: always
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrations:
+    build:
+      context: .
+      dockerfile: docker/db.Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    command: ['bun', 'run', 'db:migrate']
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  realtime:
+    build:
+      context: .
+      dockerfile: docker/realtime.Dockerfile
+    restart: always
+    expose:
+      - '3002'
+    environment:
+      IBKR_API_BASE_URL: ${IBKR_API_BASE_URL:?IBKR_API_BASE_URL is required}
+      INTERNAL_APP_URL: http://app:3000
+      IBKR_TOKEN_ENDPOINT: ${IBKR_TOKEN_ENDPOINT:?IBKR_TOKEN_ENDPOINT is required}
+      IBKR_API_IP: ${IBKR_API_IP:?IBKR_API_IP is required}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?INTERNAL_API_SECRET is required}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+      args:
+        BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+        ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:3002}
+    restart: always
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      IBKR_API_BASE_URL: ${IBKR_API_BASE_URL:?IBKR_API_BASE_URL is required}
+      IBKR_API_IP: ${IBKR_API_IP:?IBKR_API_IP is required}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?INTERNAL_API_SECRET is required}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  kronos-inference:
+    build:
+      context: .
+      dockerfile: services/kronos-inference/Dockerfile
+    restart: always
+    expose:
+      - '8000'
+    environment:
+      KRONOS_MODEL_PATH: /models/kronos-base
+      KRONOS_TOKENIZER_PATH: /models/kronos-tokenizer-base
+    volumes:
+      - ./services/kronos-inference/models:/models:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
