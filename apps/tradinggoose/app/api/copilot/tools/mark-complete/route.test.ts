@@ -284,6 +284,34 @@ describe('Copilot mark-complete API', () => {
     expect(mockHandleLocalCopilotContinuation).not.toHaveBeenCalled()
   })
 
+  it('continues a local turn on a deployment with no remote Copilot service', async () => {
+    // getCopilotApiUrl throws when no base URL is configured. It used to be
+    // awaited inside a log field before the local branch, so on a self-hosted
+    // deployment every mark-complete failed there - including local turns that
+    // never wanted the remote service. The panel showed "Finished planning" and
+    // stopped. The mock returning a URL is why the suite stayed green.
+    const { getCopilotApiUrl } = await import('@/app/api/copilot/proxy')
+    vi.mocked(getCopilotApiUrl).mockImplementation(() => {
+      throw new Error('The remote Copilot service is not configured')
+    })
+
+    mockLoadReviewSessionForUser.mockResolvedValue({
+      id: 'review-session-1',
+      userId: 'user-1',
+      entityKind: COPILOT_SESSION_KIND,
+      model: LOCAL_SESSION_MODEL,
+    })
+    storedSessionModel = LOCAL_SESSION_MODEL
+
+    const response = await POST(
+      createMarkCompleteRequest({ local: true, reviewSessionId: 'review-session-1' })
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toContain('text/event-stream')
+    expect(mockHandleLocalCopilotContinuation).toHaveBeenCalled()
+  })
+
   it('continues the local turn when the caller owns the review session', async () => {
     mockLoadReviewSessionForUser.mockResolvedValue({
       id: 'review-session-1',
