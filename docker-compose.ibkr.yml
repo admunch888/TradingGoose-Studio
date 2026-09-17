@@ -48,6 +48,13 @@ services:
     expose:
       - '3002'
     environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      BETTER_AUTH_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      REDIS_URL: redis://redis:6379
       IBKR_API_BASE_URL: ${IBKR_API_BASE_URL:?IBKR_API_BASE_URL is required}
       INTERNAL_APP_URL: http://app:3000
       IBKR_TOKEN_ENDPOINT: ${IBKR_TOKEN_ENDPOINT:?IBKR_TOKEN_ENDPOINT is required}
@@ -58,6 +65,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '--quiet', 'http://127.0.0.1:3002/health']
+      interval: 90s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   app:
     build:
@@ -68,8 +81,9 @@ services:
         ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:3002}
     restart: always
-    ports:
-      - '3000:3000'
+    # No host port mapping: tradinggoose-app-relay.service owns 0.0.0.0:3000
+    # and forwards to this container's bridge IP. Publishing 3000 directly
+    # would conflict with the relay (WSL2 port-forward workaround).
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
@@ -77,6 +91,15 @@ services:
       IBKR_API_BASE_URL: ${IBKR_API_BASE_URL:?IBKR_API_BASE_URL is required}
       IBKR_API_IP: ${IBKR_API_IP:?IBKR_API_IP is required}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?INTERNAL_API_SECRET is required}
+      # Trust the local CA that signs the Obsidian MCP server's TLS cert (https://100.64.0.8:8443)
+      NODE_EXTRA_CA_CERTS: /opt/certs/obsidian-ca.crt
+
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      BETTER_AUTH_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://realtime:3002}
+      INTERNAL_REALTIME_URL: http://realtime:3002
+    volumes:
+      - ./certs/obsidian-ca.crt:/opt/certs/obsidian-ca.crt:ro
     depends_on:
       db:
         condition: service_healthy
