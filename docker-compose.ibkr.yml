@@ -81,9 +81,8 @@ services:
         ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:3002}
     restart: always
-    # No host port mapping: tradinggoose-app-relay.service owns 0.0.0.0:3000
-    # and forwards to this container's bridge IP. Publishing 3000 directly
-    # would conflict with the relay (WSL2 port-forward workaround).
+    # No host port mapping: the app-relay socat (WSL VM, no Tailscale iface there)
+    # binds 0.0.0.0:3000 inside the WSL VM and forwards to this container's bridge IP.
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
