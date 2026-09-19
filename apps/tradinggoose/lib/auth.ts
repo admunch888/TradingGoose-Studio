@@ -14,6 +14,7 @@ import {
   organization,
 } from 'better-auth/plugins'
 import type { GenericOAuthConfig } from 'better-auth/plugins/generic-oauth'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 /** OAuth2 token type extracted from better-auth's GenericOAuthConfig */
 type OAuthTokens = Parameters<NonNullable<GenericOAuthConfig['getUserInfo']>>[0]
@@ -88,6 +89,13 @@ const BASE_TRUSTED_OAUTH_PROVIDERS = [
   'google',
   'github',
   'email-password',
+  // Broker OAuth (ibkr-paper/ibkr-live, tradier-live, alpaca-*). Without the
+  // base key here TRUSTED_OAUTH_PROVIDER_IDS filters every service under it
+  // out, so a linked broker account is untrusted and Better Auth refuses to
+  // mint a session (account_not_linked).
+  'ibkr',
+  'tradier',
+  'alpaca',
   'confluence',
   'supabase',
   'x',
@@ -454,6 +462,16 @@ export const auth = betterAuth({
   ],
   advanced: {
     crossSubDomainCookies: { enabled: false },
+  },
+  rateLimit: {
+    enabled: true,
+    window: 60,
+    max: 20,
+    customRules: {
+      '/sign-in/email': { window: 60, max: 20 },
+      '/sign-up/email': { window: 60, max: 20 },
+      '/forget-password': { window: 300, max: 10 },
+    },
   },
   database: drizzleAdapter(db, {
     provider: 'pg',
@@ -1575,7 +1593,7 @@ export const auth = betterAuth({
 
               const profile = await response.json()
               const hubId = String(profile.hub_id ?? 'hubspot')
-              const userId = String(profile.user_id ?? profile.user ?? crypto.randomUUID())
+              const userId = String(profile.user_id ?? profile.user ?? safeRandomUUID())
               const email = profile.user || `${userId}@hubspot.user`
               const now = new Date()
 
