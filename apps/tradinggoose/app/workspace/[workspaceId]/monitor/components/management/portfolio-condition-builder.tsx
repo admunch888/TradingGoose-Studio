@@ -28,6 +28,7 @@ import {
 } from '@/lib/monitors/portfolio-conditions'
 import { cn } from '@/lib/utils'
 import { useListingSelectorStore } from '@/stores/market/selector/store'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type PortfolioConditionBuilderProps = {
   condition: PortfolioFireCondition
@@ -72,7 +73,7 @@ const OPERATOR_LABELS: Record<PortfolioConditionOperator, string> = {
 
 const createId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
+    ? safeRandomUUID()
     : Math.random().toString(36).slice(2)
 
 const createRule = (): PortfolioConditionRule => ({

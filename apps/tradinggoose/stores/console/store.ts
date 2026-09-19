@@ -8,6 +8,7 @@ import type {
 import { isTerminalWorkflowExecutionEvent } from '@/lib/workflows/execution-events'
 import type { NormalizedBlockOutput } from '@/executor/types'
 import type { ConsoleEntry, ConsoleStore } from '@/stores/console/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const MAX_ENTRIES = 500 // MAX across all workflows - allows for 100 loop iterations + other workflow logs
 const MAX_IMAGE_DATA_SIZE = 1000 // Maximum size of image data to store (in characters)
@@ -231,7 +232,7 @@ export const useConsoleStore = create<ConsoleStore>()(
 
           const newEntry = {
             ...redactedEntry,
-            id: crypto.randomUUID(),
+            id: safeRandomUUID(),
             timestamp: new Date().toISOString(),
           }
 

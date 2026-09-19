@@ -1,4 +1,5 @@
 import type { copilotReviewItems, copilotReviewTurns } from '@tradinggoose/db/schema'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 // This mirrors the Codex/Copilot conversation shape inside Studio's
 // review-session envelope: one durable thread row, explicit turns, and an
@@ -147,7 +148,7 @@ export function deriveReviewTurnsAndItems(
     const shouldStartNewTurn = currentTurnId === null || role === MESSAGE_ROLES.USER
 
     if (shouldStartNewTurn) {
-      currentTurnId = crypto.randomUUID()
+      currentTurnId = safeRandomUUID()
       currentTurnIndex += 1
       lastTurnTimestamp = message.timestamp
       turns.push({
@@ -223,7 +224,7 @@ export function buildAppendReviewTurn(params: {
 } {
   const nextTurnSequence = countTurnsFromMessages(params.existingMessages)
   const nextItemSequence = params.existingMessages.length
-  const turnId = crypto.randomUUID()
+  const turnId = safeRandomUUID()
   const firstTimestamp =
     params.userMessage.timestamp ?? params.assistantMessage?.timestamp ?? new Date().toISOString()
   const lastTimestamp =

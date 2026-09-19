@@ -22,6 +22,7 @@ import { CHAT_ERROR_CODES, CHAT_REQUEST_TIMEOUT_MS } from '@/app/chat/constants'
 import { getChatErrorMessage } from '@/app/chat/errors'
 import { useAudioStreaming, useChatStreaming } from '@/app/chat/hooks'
 import type { LocaleCode } from '@/i18n/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('ChatClient')
 
@@ -315,7 +316,7 @@ export default function ChatClient({ identifier }: { identifier: string }) {
     setUserHasScrolled(false)
 
     const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       content: messageToSend.trim(),
       type: 'user',
       timestamp: new Date(),
@@ -436,7 +437,7 @@ export default function ChatClient({ identifier }: { identifier: string }) {
       logger.error('Error sending message:', error)
       setIsLoading(false)
       const failedReply: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         content: chatFailureCopy.generic,
         type: 'assistant',
         timestamp: new Date(),

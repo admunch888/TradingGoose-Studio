@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatWorkflowTemplate } from '@/i18n/workflow-inspector-core'
 import { useSubBlockValue } from '@/widgets/widgets/editor_workflow/components/workflow-block/components/sub-block/hooks/use-sub-block-value'
 import { useWorkflowBlockEditorCopy } from '@/widgets/widgets/editor_workflow/copy'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 interface EvalMetric {
   id: string
@@ -26,7 +27,7 @@ interface EvalInputProps {
 
 // Default values
 const createDefaultMetric = (): EvalMetric => ({
-  id: crypto.randomUUID(),
+  id: safeRandomUUID(),
   name: '',
   description: '',
   range: { min: 0, max: 1 },

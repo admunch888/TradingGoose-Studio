@@ -11,6 +11,7 @@ import type {
   WorkflowLogWorkflowSummary,
 } from '@/lib/logs/types'
 import { normalizeOptionalString } from '@/lib/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -223,7 +224,7 @@ const synthesizeTraceSpans = (executionData: unknown): TraceSpan[] | undefined =
           ? execution.id
           : typeof execution?.blockId === 'string'
             ? execution.blockId
-            : crypto.randomUUID(),
+            : safeRandomUUID(),
       name:
         typeof execution?.blockName === 'string' && execution.blockName
           ? execution.blockName

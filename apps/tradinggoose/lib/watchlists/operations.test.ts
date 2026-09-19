@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const mockDbTransaction = vi.hoisted(() => vi.fn())
 const mockDbSelect = vi.hoisted(() => vi.fn())
@@ -183,7 +184,7 @@ describe('watchlist operations', () => {
 
   it('remaps source IDs and parent references on create and foreign edits', async () => {
     const sourceIds = content.items.map((item) => item.id)
-    const foreignTargetItem = { ...rootItem, id: crypto.randomUUID() }
+    const foreignTargetItem = { ...rootItem, id: safeRandomUUID() }
     for (const currentItems of [[], [foreignTargetItem]]) {
       const store = materializerTx({
         items: currentItems,
@@ -333,7 +334,7 @@ describe('watchlist operations', () => {
     ).toThrow('Invalid watchlist item')
     expect(() =>
       composeWatchlistDocumentFromRows(
-        [{ ...sectionRow, id: crypto.randomUUID(), parentId: sectionRow.id }, sectionRow],
+        [{ ...sectionRow, id: safeRandomUUID(), parentId: sectionRow.id }, sectionRow],
         [],
         rootRow.id
       )

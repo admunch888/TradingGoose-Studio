@@ -6,6 +6,7 @@ import { createLogger } from '@/lib/logs/console/logger'
 import type { ChatMessage } from '@/app/chat/components/message/message'
 import { CHAT_ERROR_CODES } from '@/app/chat/constants'
 import { getChatErrorMessage } from '@/app/chat/errors'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type ChatMessages = Messages['chat']
 
@@ -103,7 +104,7 @@ export function useChatStreaming(chatCopy: ChatMessages) {
 
     // Track which blocks have streamed content (like chat panel)
     const messageIdMap = new Map<string, string>()
-    const messageId = crypto.randomUUID()
+    const messageId = safeRandomUUID()
     setMessages((prev) => [
       ...prev,
       {

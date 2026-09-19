@@ -4,6 +4,7 @@ import { type DragEvent, useEffect, useRef, useState } from 'react'
 import { upload as uploadToVercelBlob } from '@vercel/blob/client'
 import { createLogger } from '@/lib/logs/console/logger'
 import type { AttachedFile } from '../types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('CopilotUserInputAttachments')
 
@@ -47,7 +48,7 @@ export function useUserInputAttachments({ userId }: { userId?: string }) {
 
       const previewUrl = URL.createObjectURL(file)
       const tempFile: AttachedFile = {
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         name: file.name,
         size: file.size,
         type: file.type,

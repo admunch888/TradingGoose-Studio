@@ -15,6 +15,7 @@ import { type ExportWorkflowState, sanitizeForExport } from '@/lib/workflows/jso
 import { normalizeVariables } from '@/lib/workflows/variable-utils'
 import type { Variable } from '@/stores/variables/types'
 import type { WorkflowState } from '@/stores/workflows/workflow/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export const WORKFLOW_EXPORT_SOURCE = 'workflowEditor'
 export const IMPORTED_WORKFLOW_MARKER = '(imported)'
@@ -55,7 +56,7 @@ export function remapVariableIds(
   const remapped: Record<string, Variable> = {}
 
   for (const variable of Object.values(sourceVariables)) {
-    const newVarId = crypto.randomUUID()
+    const newVarId = safeRandomUUID()
     remapped[newVarId] = {
       ...variable,
       id: newVarId,

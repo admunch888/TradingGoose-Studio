@@ -9,6 +9,7 @@ import {
   seedEntitySession,
   updateWatchlistItems,
 } from './entity-session'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const documents: Y.Doc[] = []
 const createDocument = () => {
@@ -164,7 +165,7 @@ describe('watchlist entity sessions', () => {
       (items: WatchlistItem[]) => [
         ...items,
         ...Array.from({ length: 1000 }, (_, index) =>
-          listing(crypto.randomUUID(), `SYMBOL-${index}`)
+          listing(safeRandomUUID(), `SYMBOL-${index}`)
         ),
       ],
     ],

@@ -15,6 +15,7 @@ import {
 import type { BillingTierSummary } from '@/lib/billing/types'
 import { createLogger } from '@/lib/logs/console/logger'
 import { getBaseUrl } from '@/lib/urls/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('SubscriptionCore')
 
@@ -303,7 +304,7 @@ export async function backfillDefaultUserSubscriptions(): Promise<number> {
     await db
       .insert(userStats)
       .values({
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         userId: row.id,
         ...usageLimitSeed,
       })

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { useAccessibleReferencePrefixes } from '@/hooks/workflow/use-accessible-reference-prefixes'
 import { useSubBlockValue } from '@/widgets/widgets/editor_workflow/components/workflow-block/components/sub-block/hooks/use-sub-block-value'
 import { useWorkspaceId } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 interface TableProps {
   blockId: string
@@ -35,7 +36,7 @@ export function Table({ blockId, subBlockId, columns, disabled = false }: TableP
     if (!Array.isArray(storeValue)) {
       return [
         {
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           cells: Object.fromEntries(columns.map((col) => [col, ''])),
         },
       ]
@@ -45,7 +46,7 @@ export function Table({ blockId, subBlockId, columns, disabled = false }: TableP
     const validatedRows = storeValue.map((row) => {
       // Ensure row has an id
       if (!row.id) {
-        row.id = crypto.randomUUID()
+        row.id = safeRandomUUID()
       }
 
       // Ensure row has cells object with proper structure
@@ -120,7 +121,7 @@ export function Table({ blockId, subBlockId, columns, disabled = false }: TableP
 
     if (rowIndex === rows.length - 1 && value !== '') {
       updatedRows.push({
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         cells: Object.fromEntries(columns.map((col) => [col, ''])),
       })
     }

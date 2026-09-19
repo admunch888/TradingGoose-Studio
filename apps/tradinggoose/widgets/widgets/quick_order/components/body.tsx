@@ -54,6 +54,7 @@ import {
   resolveQuickOrderProviderId,
 } from '@/widgets/widgets/quick_order/components/shared'
 import type { QuickOrderWidgetParams } from '@/widgets/widgets/quick_order/contract'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type QuickOrderBodyParams = QuickOrderWidgetParams | null
 type OrderAttemptIdempotency = { fingerprint: string; key: string }
@@ -684,7 +685,7 @@ export function QuickOrderWidgetBody({
     const idempotencyKey =
       orderAttemptIdempotencyRef.current?.fingerprint === fingerprint
         ? orderAttemptIdempotencyRef.current.key
-        : `trading-order:manual:${crypto.randomUUID()}`
+        : `trading-order:manual:${safeRandomUUID()}`
     orderAttemptIdempotencyRef.current = { fingerprint, key: idempotencyKey }
 
     submissionLockRef.current = true

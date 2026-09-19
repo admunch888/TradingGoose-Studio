@@ -12,6 +12,7 @@ import {
   TOOL_RESULT_ITEM_PREFIX,
 } from '@/lib/copilot/local-runtime/working-rows'
 import { createLogger } from '@/lib/logs/console/logger'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export {
   isLocalWorkingContent,
@@ -109,7 +110,7 @@ export async function persistLocalWorkingMessage(params: {
     turnId: null,
     itemId: isToolMessage
       ? `${TOOL_RESULT_ITEM_PREFIX}${message.tool_call_id}`
-      : `local_tool_calls_${crypto.randomUUID()}`,
+      : `local_tool_calls_${safeRandomUUID()}`,
     kind: isToolMessage ? 'tool_result' : FUNCTION_CALL_KIND,
     messageRole: isToolMessage ? 'tool' : 'assistant',
     content: isToolMessage
@@ -405,7 +406,7 @@ export async function appendLocalAssistantText(
 
   await persistLocalReviewMessage({
     reviewSessionId,
-    itemId: `local_assistant_${crypto.randomUUID()}`,
+    itemId: `local_assistant_${safeRandomUUID()}`,
     role: 'assistant',
     content: text,
   })

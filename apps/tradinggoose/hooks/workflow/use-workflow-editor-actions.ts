@@ -8,6 +8,7 @@ import { getBlock } from '@/blocks'
 import { getUniqueBlockName } from '@/stores/workflows/utils'
 import type { Position } from '@/stores/workflows/workflow/types'
 import { useOptionalWorkflowRoute } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WorkflowEditorActions')
 
@@ -253,7 +254,7 @@ export function useWorkflowEditorActions() {
       if (!sourceBlock) return
 
       // Generate new ID and calculate position
-      const newId = crypto.randomUUID()
+      const newId = safeRandomUUID()
       const offsetPosition = {
         x: sourceBlock.position.x + 250,
         y: sourceBlock.position.y + 20,

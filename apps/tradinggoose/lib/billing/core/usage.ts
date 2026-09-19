@@ -25,6 +25,7 @@ import { sendEmail } from '@/lib/email/mailer'
 import { getEmailPreferences } from '@/lib/email/unsubscribe'
 import { createLogger } from '@/lib/logs/console/logger'
 import { getBaseUrl } from '@/lib/urls/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('UsageManagement')
 
@@ -48,7 +49,7 @@ export async function handleNewUser(userId: string): Promise<void> {
     await db
       .insert(userStats)
       .values({
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         userId,
         grantedOnboardingAllowanceUsd: onboardingAllowanceUsd.toString(),
         customUsageLimit: onboardingAllowanceUsd.toString(),

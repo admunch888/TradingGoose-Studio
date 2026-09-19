@@ -57,6 +57,7 @@ import { createFileContent } from '@/lib/uploads/utils/file-utils'
 import { encodeSSE, SSE_HEADERS } from '@/lib/utils'
 import { proxyCopilotRequest } from '@/app/api/copilot/proxy'
 import type { ChatContext } from '@/stores/copilot/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('CopilotChatAPI')
 
@@ -173,7 +174,7 @@ async function persistChatMessages(
 
     const assistantMessage = hasAssistantMessage
       ? {
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           role: MESSAGE_ROLES.ASSISTANT,
           content: params.assistantContent ?? '',
           timestamp: params.timestamp,
@@ -599,7 +600,7 @@ function enqueueErrorRewrite(
     (typeof event.data === 'string' && event.data) ||
     'Sorry, I encountered an error. Please try again.'
   const formatted = `_${displayMessage}_`
-  const itemId = `error-${crypto.randomUUID()}`
+  const itemId = `error-${safeRandomUUID()}`
   try {
     controller.enqueue(
       encodeSSE({
@@ -797,7 +798,7 @@ export async function POST(req: NextRequest) {
       workspaceId: incomingWorkspaceId,
       contexts,
     } = ChatMessageSchema.parse(body)
-    const userMessageIdToUse = userMessageId || crypto.randomUUID()
+    const userMessageIdToUse = userMessageId || safeRandomUUID()
     try {
       logger.info(`[${tracker.requestId}] Received chat POST`, {
         hasContexts: Array.isArray(contexts),

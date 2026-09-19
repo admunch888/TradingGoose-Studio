@@ -9,6 +9,7 @@ import {
   getNodeHierarchy,
   resizeContainerNodes,
 } from '@/widgets/widgets/editor_workflow/components/workflow-editor/canvas/node-position-utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type BlocksById = Record<string, BlockState>
 type WorkflowCanvasNode = Node<WorkflowCanvasNodeData>
@@ -261,7 +262,7 @@ export function buildAutoConnectEdgesForContainerDrop({
 
     return [
       {
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         source: closestChild.id,
         target: nodeId,
         sourceHandle: determineSourceHandle({ id: closestChild.id, type: closestChild.type }),
@@ -276,7 +277,7 @@ export function buildAutoConnectEdgesForContainerDrop({
 
   return [
     {
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       source: targetParentId,
       target: nodeId,
       sourceHandle: containerKind === 'loop' ? 'loop-start-source' : 'parallel-start-source',

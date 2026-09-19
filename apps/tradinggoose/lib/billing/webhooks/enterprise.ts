@@ -15,6 +15,7 @@ import { resolveEmailLocale } from '@/lib/email/locale'
 import { sendEmail } from '@/lib/email/mailer'
 import { createLogger } from '@/lib/logs/console/logger'
 import type { EnterpriseSubscriptionMetadata } from '../types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('BillingEnterprise')
 
@@ -112,7 +113,7 @@ export async function handleManualEnterpriseSubscription(event: Stripe.Event) {
   }
 
   const subscriptionRow = {
-    id: crypto.randomUUID(),
+    id: safeRandomUUID(),
     plan: billingTierRecord.id,
     billingTierId: billingTierRecord.id,
     referenceType: 'organization' as const,

@@ -6,6 +6,7 @@ import { createLogger } from '@/lib/logs/console/logger'
 import { buildWorkspaceAccessScope } from '@/lib/permissions/utils'
 import { createApiResponse, getUserLimits } from '@/app/api/v1/logs/meta'
 import { checkRateLimit, createRateLimitResponse } from '@/app/api/v1/middleware'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('V1LogDetailsAPI')
 
@@ -32,7 +33,7 @@ const toIsoString = (value: string | Date | null | undefined): string | null => 
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = safeRandomUUID().slice(0, 8)
 
   try {
     const rateLimit = await checkRateLimit(request, 'logs-detail')

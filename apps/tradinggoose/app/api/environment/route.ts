@@ -8,6 +8,7 @@ import { createLogger } from '@/lib/logs/console/logger'
 import { generateRequestId } from '@/lib/utils'
 import { decryptSecret, encryptSecret } from '@/lib/utils-server'
 import type { EnvironmentVariable } from '@/stores/settings/environment/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('EnvironmentAPI')
 
@@ -52,7 +53,7 @@ export async function PUT(req: NextRequest) {
       await db
         .insert(environmentVariables)
         .values({
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           userId: session.user.id,
           key,
           value: encrypted,

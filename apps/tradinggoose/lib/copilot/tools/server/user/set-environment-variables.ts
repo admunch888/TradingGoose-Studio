@@ -13,6 +13,7 @@ import {
 } from '@/lib/copilot/tools/server/base-tool'
 import { verifyWorkspaceContext } from '@/lib/copilot/tools/server/entities/shared'
 import { encryptSecret } from '@/lib/utils-server'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const EnvVarSchema = z.discriminatedUnion('scope', [
   z
@@ -108,7 +109,7 @@ async function writeEncryptedEnvironmentVariables(
       await tx
         .insert(environmentVariables)
         .values({
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           ...(scope === 'workspace' ? { workspaceId: targetId } : { userId: targetId }),
           key,
           value: encrypted,

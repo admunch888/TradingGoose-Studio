@@ -23,6 +23,7 @@ import { getNextAvailableSlot } from '@/lib/knowledge/tags/service'
 import { createLogger } from '@/lib/logs/console/logger'
 import type { DocumentProcessingPayload } from '@/background/knowledge-processing'
 import type { DocumentSortField, SortOrder } from './types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('DocumentService')
 
@@ -419,7 +420,7 @@ export async function processDocumentAsync(
                 const chunkIndex = i + batchIndex
 
                 return {
-                  id: crypto.randomUUID(),
+                  id: safeRandomUUID(),
                   knowledgeBaseId,
                   documentId,
                   chunkIndex,

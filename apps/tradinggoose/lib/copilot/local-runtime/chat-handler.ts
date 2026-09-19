@@ -7,6 +7,7 @@ import { LOCAL_COPILOT_MODEL_PREFIX } from '@/lib/copilot/local-runtime/runtime-
 import type { LocalWorkingMessage } from '@/lib/copilot/local-runtime/working-messages'
 import { createLogger } from '@/lib/logs/console/logger'
 import { encodeSSE, SSE_HEADERS } from '@/lib/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('LocalCopilotChatHandler')
 
@@ -132,7 +133,7 @@ async function persistAssistantTranscript(params: {
  */
 export async function handleLocalCopilotChat(params: LocalChatHandlerParams): Promise<Response> {
   const conversationId = params.conversationId || params.reviewSessionId
-  const assistantMessageId = `local_assistant_${crypto.randomUUID()}`
+  const assistantMessageId = `local_assistant_${safeRandomUUID()}`
   const bareModel = params.model.startsWith(LOCAL_COPILOT_MODEL_PREFIX)
     ? params.model.slice(LOCAL_COPILOT_MODEL_PREFIX.length)
     : params.model
@@ -419,7 +420,7 @@ async function persistLocalContinuationText(
   if (workingReplyText.trim()) {
     await persistLocalWorkingAssistantMessage({
       reviewSessionId,
-      itemId: `continuation_${crypto.randomUUID()}`,
+      itemId: `continuation_${safeRandomUUID()}`,
       text: workingReplyText,
     })
   }

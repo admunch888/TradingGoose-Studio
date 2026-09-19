@@ -12,6 +12,7 @@ import type {
   WorkflowRegistry,
 } from '@/stores/workflows/registry/types'
 import { WORKSPACE_BOOTSTRAP_CHANNEL } from '@/stores/workflows/registry/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WorkflowRegistry')
 
@@ -319,7 +320,7 @@ export const useWorkflowRegistry = create<WorkflowRegistry>()(
             : [WORKSPACE_BOOTSTRAP_CHANNEL]
         })()
 
-        const requestId = crypto.randomUUID()
+        const requestId = safeRandomUUID()
 
         set((state) => {
           const nextHydrationByChannel = { ...state.hydrationByChannel }
@@ -476,13 +477,13 @@ export const useWorkflowRegistry = create<WorkflowRegistry>()(
                 const currentHydration = existingHydration[channelKey]
                 nextHydrationByChannel[channelKey] = createMetadataLoadingHydrationState(
                   workspaceId,
-                  currentHydration?.requestId ?? crypto.randomUUID()
+                  currentHydration?.requestId ?? safeRandomUUID()
                 )
                 nextHydrationByChannel[channelKey].workflowId = currentHydration?.workflowId ?? null
               })
             } else {
               nextHydrationByChannel[WORKSPACE_BOOTSTRAP_CHANNEL] =
-                createMetadataLoadingHydrationState(workspaceId, crypto.randomUUID())
+                createMetadataLoadingHydrationState(workspaceId, safeRandomUUID())
             }
 
             return {
@@ -612,7 +613,7 @@ export const useWorkflowRegistry = create<WorkflowRegistry>()(
           return
         }
 
-        const requestId = crypto.randomUUID()
+        const requestId = safeRandomUUID()
         const workspaceId = workflowMetadata?.workspaceId ?? hydration.workspaceId ?? null
 
         set((current) => {

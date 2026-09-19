@@ -1,3 +1,4 @@
+import { safeRandomUUID } from '@/lib/safe-uuid'
 /**
  * Pure workflow-variable mutation helpers that operate on a Yjs document.
  *
@@ -190,7 +191,7 @@ export function addWorkflowVariable(
   providedId?: string,
   origin?: string
 ): string {
-  const id = providedId || crypto.randomUUID()
+  const id = providedId || safeRandomUUID()
   const workflowVariables = readWorkflowVariables(doc, variable.workflowId)
   const existingNames = workflowVariables.map((entry) => entry.name)
 
@@ -329,7 +330,7 @@ export function duplicateWorkflowVariable(
   const current = getVariablesMap(doc).get(id) as Variable | undefined
   if (!current) return null
 
-  const nextId = providedId || crypto.randomUUID()
+  const nextId = providedId || safeRandomUUID()
   const workflowVariables = readWorkflowVariables(doc, current.workflowId)
   const baseName = `${current.name} (copy)`
   const uniqueName = ensureUniqueVariableName(

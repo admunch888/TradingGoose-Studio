@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { vi } from 'vitest'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export interface MockUser {
   id: string
@@ -556,7 +557,7 @@ export function mockUuid(mockValue = 'test-uuid') {
 }
 
 /**
- * Mock crypto.randomUUID for tests
+ * Mock safeRandomUUID for tests
  */
 export function mockCryptoUuid(mockValue = 'mock-uuid-1234-5678') {
   vi.stubGlobal('crypto', {

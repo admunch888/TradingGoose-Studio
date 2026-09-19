@@ -16,6 +16,7 @@ import { lockSavedEntityList } from '@/lib/yjs/server/entity-loaders'
 import { createWorkflowSnapshot } from '@/lib/yjs/workflow-session'
 import { createWorkflowRealtimeRequiredResponse } from '@/app/api/workflows/utils'
 import type { WorkflowState } from '@/stores/workflows/workflow/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WorkflowAPI')
 
@@ -152,7 +153,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const workflowId = crypto.randomUUID()
+    const workflowId = safeRandomUUID()
     const now = new Date()
     const initialState = getInitialWorkflowState(initialWorkflowState, now)
     const remappedVariables = remapVariableIds(

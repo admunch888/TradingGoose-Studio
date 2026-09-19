@@ -1,10 +1,11 @@
 import { loadSystemOAuthClientCredentialsForProvider } from '@/lib/oauth/system-managed-config'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export const TRELLO_OAUTH_STATE_COOKIE = 'tradinggoose_trello_oauth_state'
 export const TRELLO_OAUTH_STATE_MAX_AGE_SECONDS = 10 * 60
 
 export function createTrelloOAuthState() {
-  return crypto.randomUUID()
+  return safeRandomUUID()
 }
 
 export function getTrelloOAuthStateCookieOptions() {

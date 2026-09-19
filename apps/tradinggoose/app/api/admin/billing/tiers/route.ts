@@ -19,6 +19,7 @@ import {
   isBillingEnabledForRuntime,
 } from '@/lib/billing/settings'
 import { createLogger } from '@/lib/logs/console/logger'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('AdminBillingTierCreateAPI')
 
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const tierId = `tier_${crypto.randomUUID()}`
+    const tierId = `tier_${safeRandomUUID()}`
     const catalogRevision = await validateBillingTierStripeCatalog({ id: tierId, ...parsed.data })
     await db.transaction(async (tx) => {
       await validateBillingTierStripeMutation(tx, { id: tierId, ...parsed.data }, catalogRevision)

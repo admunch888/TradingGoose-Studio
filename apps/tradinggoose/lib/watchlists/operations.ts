@@ -16,6 +16,7 @@ import {
 import { readSavedEntityFieldsForExecution } from '@/lib/yjs/server/bootstrap-review-target'
 import { type EntityListBeforeInsert, lockSavedEntityList } from '@/lib/yjs/server/entity-loaders'
 import { refreshEntityListSession } from '@/lib/yjs/server/snapshot-bridge'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type WatchlistScope = {
   workspaceId: string
@@ -103,7 +104,7 @@ export async function createWatchlistFromDocument(
       const [createdRoot] = await tx
         .insert(watchlistTable)
         .values({
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           workspaceId: scope.workspaceId,
           userId: null,
           parentId: null,

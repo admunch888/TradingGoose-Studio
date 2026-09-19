@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { formatTimezoneLabel, parseUtcOffsetMinutes } from '@/lib/time-format'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -214,7 +215,7 @@ export function getInvalidCharacters(name: string): string[] {
  * Generate a short request ID for correlation
  */
 export function generateRequestId(): string {
-  return crypto.randomUUID().slice(0, 8)
+  return safeRandomUUID().slice(0, 8)
 }
 
 /**

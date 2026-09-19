@@ -9,6 +9,7 @@ import {
   releaseLock,
   setCachedValue,
 } from '@/lib/redis'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('CopilotUsageReservations')
 
@@ -225,7 +226,7 @@ function delay(ms: number): Promise<void> {
 
 async function withScopeLock<T>(scope: ReservationScope, action: () => Promise<T>): Promise<T> {
   const lockKey = getScopeLockKey(scope)
-  const token = crypto.randomUUID()
+  const token = safeRandomUUID()
   let acquired = false
 
   for (let attempt = 0; attempt < LOCK_ACQUIRE_ATTEMPTS; attempt++) {
@@ -365,7 +366,7 @@ export async function reserveCopilotUsage(params: {
     const createdAt = new Date()
     const expiresAt = new Date(createdAt.getTime() + RESERVATION_TTL_SECONDS * 1000)
     const reservation: CopilotUsageReservation = {
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       userId: params.userId,
       workflowId: params.workflowId ?? null,
       scopeType: scope.scopeType,

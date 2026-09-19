@@ -4,6 +4,7 @@ import { desc, eq, sql } from 'drizzle-orm'
 import { provisionDashboardLayoutForWorkspaceUserInTx } from '@/lib/dashboard-layouts/operations'
 import { buildWorkspaceAccessScope, type PermissionType } from '@/lib/permissions/utils'
 import { toWorkspaceApiRecord } from '@/lib/workspaces/billing-owner'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type WorkspaceRecord = typeof workspace.$inferSelect
 const DEFAULT_WORKSPACE_BOOTSTRAP_LOCK_NAMESPACE = 1_904_202_615
@@ -65,7 +66,7 @@ export async function createDefaultWorkspaceForUser(userId: string, userName?: s
 }
 
 function buildWorkspaceRecord(userId: string, name: string): WorkspaceRecord {
-  const workspaceId = crypto.randomUUID()
+  const workspaceId = safeRandomUUID()
   const now = new Date()
   return {
     id: workspaceId,
@@ -108,7 +109,7 @@ export async function grantWorkspaceAccessInTx(
   await tx
     .insert(permissions)
     .values({
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       userId: input.userId,
       entityType: 'workspace' as const,
       entityId: input.workspaceId,

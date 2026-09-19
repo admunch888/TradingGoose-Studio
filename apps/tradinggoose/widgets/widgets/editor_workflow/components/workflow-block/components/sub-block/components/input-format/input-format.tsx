@@ -28,6 +28,7 @@ import { formatTemplate } from '@/i18n/utils'
 import { ListingSelectorInput } from '@/widgets/widgets/editor_workflow/components/workflow-block/components/sub-block/components/listing-selector/listing-selector'
 import { useSubBlockValue } from '@/widgets/widgets/editor_workflow/components/workflow-block/components/sub-block/hooks/use-sub-block-value'
 import { useWorkflowBlockEditorCopy } from '@/widgets/widgets/editor_workflow/copy'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type FieldType = WorkflowFieldType
 
@@ -136,7 +137,7 @@ export function FieldFormat({
     if (isPreview || disabled) return
 
     const newField: Field = {
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       ...DEFAULT_FIELD,
     }
     setStoreValue([...(fields || []), newField])

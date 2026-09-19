@@ -22,6 +22,7 @@ import {
 } from '@/app/api/chat/utils'
 import { createErrorResponse, createSuccessResponse } from '@/app/api/workflows/utils'
 import { CHAT_ERROR_CODES } from '@/app/chat/constants'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('ChatIdentifierAPI')
 
@@ -188,7 +189,7 @@ export async function POST(
       }
 
       // Generate executionId early so it can be used for file uploads and workflow execution
-      const executionId = crypto.randomUUID()
+      const executionId = safeRandomUUID()
       const workspaceId = workflowResult[0].workspaceId
 
       if (!workspaceId) {

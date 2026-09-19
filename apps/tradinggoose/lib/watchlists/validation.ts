@@ -12,6 +12,7 @@ import type {
   WatchlistItem,
   WatchlistSettings,
 } from '@/lib/watchlists/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -277,13 +278,13 @@ export function resolveWatchlistDocumentItemIds(
     if (item.id) {
       resolvedIds.set(
         item.id,
-        preservedIds.has(item.id) && UUID_PATTERN.test(item.id) ? item.id : crypto.randomUUID()
+        preservedIds.has(item.id) && UUID_PATTERN.test(item.id) ? item.id : safeRandomUUID()
       )
     }
   }
 
   return items.map((item) => {
-    const id = item.id ? (resolvedIds.get(item.id) as string) : crypto.randomUUID()
+    const id = item.id ? (resolvedIds.get(item.id) as string) : safeRandomUUID()
     if (item.type === 'section') return { ...item, id, parentId: null }
     return {
       ...item,

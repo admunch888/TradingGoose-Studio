@@ -46,6 +46,7 @@ import {
   verifySavedEntityContext,
   verifyWorkspaceContext,
 } from './shared'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type WorkflowSummary = {
   blocks: Array<{
@@ -496,7 +497,7 @@ export const createWorkflowServerTool: BaseServerTool<
       }
     }
 
-    const workflowId = crypto.randomUUID()
+    const workflowId = safeRandomUUID()
     const now = new Date()
     const description = typeof args.description === 'string' ? args.description : 'New workflow'
     const color = getStableVibrantColor(workflowId)

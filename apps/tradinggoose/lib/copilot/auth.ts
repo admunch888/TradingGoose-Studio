@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { authenticateApiKeyFromHeader, updateApiKeyLastUsed } from '@/lib/api-key/service'
 import { getSession } from '@/lib/auth'
 import { generateRequestId } from '@/lib/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export interface CopilotAuthResult {
   userId: string | null
@@ -25,7 +26,7 @@ export function createInternalServerErrorResponse(message: string): NextResponse
 }
 
 export function createRequestId(): string {
-  return crypto.randomUUID()
+  return safeRandomUUID()
 }
 
 export function createShortRequestId(): string {

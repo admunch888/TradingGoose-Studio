@@ -4,6 +4,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { createLogger } from '@/lib/logs/console/logger'
 import { getTrelloApiKey, TRELLO_OAUTH_STATE_COOKIE } from '@/lib/trello/auth'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
       return jsonWithClearedState({ success: true })
     }
 
-    const id = crypto.randomUUID()
+    const id = safeRandomUUID()
     await db.insert(account).values({
       id,
       accountId,

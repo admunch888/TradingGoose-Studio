@@ -14,6 +14,7 @@ import type {
   TradingPortfolioPerformanceWindow,
   UnifiedTradingPortfolioPerformance,
 } from '@/providers/trading/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type TradingPortfolioChannel = 'accounts' | 'account-snapshot' | 'portfolio-performance'
 
@@ -158,7 +159,7 @@ function useTradingPortfolioSocketData<T>({
   const [isFetching, setIsFetching] = useState(false)
   const runIdRef = useRef(0)
   const instanceIdRef = useRef<string | null>(null)
-  if (!instanceIdRef.current) instanceIdRef.current = crypto.randomUUID()
+  if (!instanceIdRef.current) instanceIdRef.current = safeRandomUUID()
   const subscriptionRef = useRef<SocketSubscriptionRef | null>(null)
   const pendingRefetchRef = useRef<PendingSocketRefetch<T> | null>(null)
 
@@ -438,7 +439,7 @@ function useTradingPortfolioSocketData<T>({
     const promise = new Promise<{ data: T | undefined; error: Error | null }>((resolve) => {
       resolvePending = resolve
     })
-    const refreshId = crypto.randomUUID()
+    const refreshId = safeRandomUUID()
     const timeout = setTimeout(() => {
       const timeoutError = new Error('Trading portfolio refresh timed out')
       setError(timeoutError)

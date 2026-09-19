@@ -67,6 +67,7 @@ import {
 } from '@/widgets/widgets/data_chart/options'
 import { WatchlistListActionsButton } from '@/widgets/widgets/watchlist/components/watchlist-list-actions-button'
 import type { WatchlistWidgetParams } from '@/widgets/widgets/watchlist/contract'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type WatchlistHeaderControlsSlotProps = {
   workspaceId?: string
@@ -313,7 +314,7 @@ export const WatchlistHeaderCenterControls = ({
     try {
       setIsAddingListing(true)
       const item = {
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         type: 'listing' as const,
         parentId: null,
         listing: pendingListing,
@@ -671,7 +672,7 @@ export const WatchlistHeaderRightControls = ({
       selectedDocument.updateItems((items) => [
         ...items,
         {
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           type: 'section',
           parentId: null,
           label: resolveNextSectionName(selectedWatchlist, copy.header.defaultSectionPrefix),

@@ -21,6 +21,7 @@ import {
 import { createLogger } from '@/lib/logs/console/logger'
 import { getMonitorRowById, toMonitorRecord } from '@/app/api/monitors/shared'
 import { updateMonitorForUser } from '@/app/api/monitors/update-service'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('EditMonitorServerTool')
 
@@ -87,7 +88,7 @@ export const editMonitorServerTool: BaseServerTool<EditMonitorArgs> = {
         ...nextFields,
         workspaceId: row.workflow.workspaceId,
       },
-      requestId: crypto.randomUUID(),
+      requestId: safeRandomUUID(),
       logger,
     })) as MonitorRecord
     const resolvedListing = await resolveMonitorListingPresentation(nextListing, context?.signal)

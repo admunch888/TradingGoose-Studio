@@ -34,6 +34,7 @@ import {
   validateAirtableWebhookConfig,
   WebhookRevisionConflictError,
 } from '@/lib/webhooks/webhook-helpers'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WebhooksAPI')
 export const dynamic = 'force-dynamic'
@@ -178,7 +179,7 @@ export async function POST(request: NextRequest) {
         if (!finalPath || finalPath.trim() === '') {
           finalPath = isMicrosoftTeamsChatSubscription
             ? generateMicrosoftTeamsChatCallbackPath()
-            : `${provider}-${crypto.randomUUID()}`
+            : `${provider}-${safeRandomUUID()}`
           logger.info(`[${requestId}] Generated webhook path for ${provider} trigger: ${finalPath}`)
         }
       } else {

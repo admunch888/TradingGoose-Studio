@@ -10,6 +10,7 @@ import { useConsoleStore } from '@/stores/console/store'
 import { useExecutionStore } from '@/stores/execution/store'
 import { buildExecutableWorkflowData } from '@/stores/workflows/workflow/utils'
 import { useWorkflowRoute } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('useWorkflowExecution')
 const WORKFLOW_EXECUTION_FAILURE_MESSAGE = 'Workflow execution failed'
@@ -79,7 +80,7 @@ function normalizeErrorMessage(error: unknown): string {
 }
 
 function createExecutionId() {
-  return globalThis.crypto.randomUUID()
+  return globalThis.safeRandomUUID()
 }
 
 export function useWorkflowExecution() {

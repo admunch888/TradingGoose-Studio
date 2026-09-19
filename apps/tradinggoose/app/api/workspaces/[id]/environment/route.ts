@@ -8,6 +8,7 @@ import { createLogger } from '@/lib/logs/console/logger'
 import { getUserEntityPermissions } from '@/lib/permissions/utils'
 import { generateRequestId } from '@/lib/utils'
 import { decryptSecret, encryptSecret } from '@/lib/utils-server'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WorkspaceEnvironmentAPI')
 
@@ -165,7 +166,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       await db
         .insert(environmentVariables)
         .values({
-          id: crypto.randomUUID(),
+          id: safeRandomUUID(),
           workspaceId,
           key,
           value: encrypted,

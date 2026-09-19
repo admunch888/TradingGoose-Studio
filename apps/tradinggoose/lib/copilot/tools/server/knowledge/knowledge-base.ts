@@ -26,6 +26,7 @@ import {
   verifySavedEntityContext,
   verifyWorkspaceContext,
 } from '../entities/shared'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('KnowledgeBaseServerTools')
 
@@ -66,7 +67,7 @@ async function createKnowledgeBaseEntity(
       embeddingDimension: 1536,
       chunkingConfig: fields.chunkingConfig as ChunkingConfig,
     },
-    crypto.randomUUID().slice(0, 8),
+    safeRandomUUID().slice(0, 8),
     { beforeInsert }
   )
 

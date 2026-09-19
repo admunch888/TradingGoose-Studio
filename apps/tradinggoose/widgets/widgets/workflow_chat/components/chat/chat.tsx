@@ -18,6 +18,7 @@ import type { ChatMessage as StoredChatMessage } from '@/stores/chat/types'
 import { useExecutionStore } from '@/stores/execution/store'
 import { useWorkflowRoute } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
 import { ChatMessage } from '..'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('ChatPanel')
 
@@ -200,7 +201,7 @@ export function Chat({ chatMessage, setChatMessage, hideScrollbar = true }: Chat
     const conversationId = getConversationId(currentWorkflowId)
     let result: Awaited<ReturnType<typeof handleRunWorkflow>>
     const streamState = {
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       content: '',
       timestamp: new Date().toISOString(),
       errorShown: false,
@@ -462,7 +463,7 @@ export function Chat({ chatMessage, setChatMessage, hideScrollbar = true }: Chat
                   }
 
                   validNewFiles.push({
-                    id: crypto.randomUUID(),
+                    id: safeRandomUUID(),
                     name: file.name,
                     size: file.size,
                     type: file.type,
@@ -632,7 +633,7 @@ export function Chat({ chatMessage, setChatMessage, hideScrollbar = true }: Chat
                     }
 
                     newFiles.push({
-                      id: crypto.randomUUID(),
+                      id: safeRandomUUID(),
                       name: file.name,
                       size: file.size,
                       type: file.type,

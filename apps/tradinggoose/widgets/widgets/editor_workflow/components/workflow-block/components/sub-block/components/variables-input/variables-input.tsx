@@ -21,6 +21,7 @@ import type { Variable, VariableType } from '@/stores/variables/types'
 import { useSubBlockValue } from '@/widgets/widgets/editor_workflow/components/workflow-block/components/sub-block/hooks/use-sub-block-value'
 import { useWorkflowId } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
 import { useWorkflowBlockEditorCopy } from '@/widgets/widgets/editor_workflow/copy'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 interface VariableAssignment {
   id: string
@@ -96,7 +97,7 @@ export function VariablesInput({
 
     const newAssignment: VariableAssignment = {
       ...DEFAULT_ASSIGNMENT,
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
     }
     setStoreValue([...(assignments || []), newAssignment])
   }

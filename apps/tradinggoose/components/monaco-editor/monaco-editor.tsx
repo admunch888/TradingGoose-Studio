@@ -17,6 +17,7 @@ import type {
   MonacoModule,
 } from '@/components/monaco-editor/monaco-editor-types'
 import { cn } from '@/lib/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const MonacoReactEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false })
 const VIRTUAL_DIAGNOSTICS_OWNER = 'tradinggoose-virtual-diagnostics'
@@ -176,7 +177,7 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       if (current?.endsWith(`.${extension}`)) return current
       const id =
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
+          ? safeRandomUUID()
           : Math.random().toString(36).slice(2)
       const nextPath = `inmemory://model/monaco-${id}.${extension}`
       modelPathRef.current = nextPath
@@ -630,7 +631,7 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         const diagnosticsModelId =
           diagnosticsModelIdRef.current ??
           (typeof crypto !== 'undefined' && 'randomUUID' in crypto
-            ? crypto.randomUUID()
+            ? safeRandomUUID()
             : Math.random().toString(36).slice(2))
         diagnosticsModelIdRef.current = diagnosticsModelId
         const hiddenModelPath = monaco.Uri.from({

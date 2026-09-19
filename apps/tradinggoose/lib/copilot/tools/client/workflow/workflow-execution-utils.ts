@@ -4,6 +4,7 @@ import { runQueuedWorkflowExecution } from '@/lib/workflows/queued-execution-cli
 import { resolveWorkflowRunTrigger } from '@/lib/workflows/triggers'
 import type { ExecutionResult } from '@/executor/types'
 import { buildExecutableWorkflowData } from '@/stores/workflows/workflow/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WorkflowExecutionUtils')
 
@@ -15,7 +16,7 @@ type WorkflowExecutionOptions = {
 }
 
 function createExecutionId() {
-  return globalThis.crypto.randomUUID()
+  return globalThis.safeRandomUUID()
 }
 
 export async function executeWorkflowWithFullLogging(

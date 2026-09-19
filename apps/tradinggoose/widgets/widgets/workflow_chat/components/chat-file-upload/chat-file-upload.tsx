@@ -5,6 +5,7 @@ import { File, FileText, Image, Paperclip, X } from 'lucide-react'
 import { createLogger } from '@/lib/logs/console/logger'
 import { formatTemplate } from '@/i18n/utils'
 import { useWorkflowChatMessages } from '@/i18n/workspace-widget-hooks'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('ChatFileUpload')
 
@@ -89,7 +90,7 @@ export function ChatFileUpload({
       }
 
       newFiles.push({
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         name: file.name,
         size: file.size,
         type: file.type,

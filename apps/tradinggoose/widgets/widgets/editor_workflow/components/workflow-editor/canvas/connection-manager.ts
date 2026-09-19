@@ -1,4 +1,5 @@
 import type { Edge, Node } from '@xyflow/react'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 interface ConnectionLike {
   source?: string | null
@@ -41,7 +42,7 @@ export function createConnectionEdge({
   connection,
   nodes,
   blocks,
-  createEdgeId = () => crypto.randomUUID(),
+  createEdgeId = () => safeRandomUUID(),
 }: CreateConnectionEdgeParams): Edge | null {
   const source = connection.source
   const target = connection.target

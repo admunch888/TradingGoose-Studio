@@ -20,6 +20,7 @@ import { useDependsOnGate } from '@/widgets/widgets/editor_workflow/components/w
 import { useSubBlockValue } from '@/widgets/widgets/editor_workflow/components/workflow-block/components/sub-block/hooks/use-sub-block-value'
 import { useOptionalWorkflowRoute } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
 import { useWorkflowBlockEditorCopy } from '@/widgets/widgets/editor_workflow/copy'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type DropdownOptionObject = SubBlockOption
 
@@ -372,7 +373,7 @@ export function Dropdown({
             fieldType === 'object' || fieldType === 'array' ? JSON.stringify(value, null, 2) : value
 
           return {
-            id: crypto.randomUUID(),
+            id: safeRandomUUID(),
             name: key,
             type: fieldType,
             value: fieldValue,

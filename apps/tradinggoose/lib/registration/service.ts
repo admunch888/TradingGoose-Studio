@@ -18,6 +18,7 @@ import {
 import { getBaseUrl } from '@/lib/urls/utils'
 import { localizeUrl } from '@/i18n/utils'
 import { DEFAULT_REGISTRATION_MODE, type RegistrationMode, type WaitlistStatus } from './shared'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('RegistrationService')
 const RESEND_BATCH_EMAIL_LIMIT = 100
@@ -137,7 +138,7 @@ export async function addToWaitlist(email: string, locale?: string | null): Prom
 
   const now = new Date()
   const entry = {
-    id: crypto.randomUUID(),
+    id: safeRandomUUID(),
     email: normalizedEmail,
     status: 'pending' as const,
     approvedAt: null,

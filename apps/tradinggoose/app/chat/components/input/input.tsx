@@ -7,6 +7,7 @@ import { AlertCircle, Paperclip, Send, Square, X } from 'lucide-react'
 import type { Messages } from 'next-intl'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTemplate } from '@/i18n/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type ChatMessages = Messages['chat']
 
@@ -151,7 +152,7 @@ export const ChatInput: React.FC<{
       }
 
       newFiles.push({
-        id: crypto.randomUUID(),
+        id: safeRandomUUID(),
         name: file.name,
         size: file.size,
         type: file.type,

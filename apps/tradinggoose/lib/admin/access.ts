@@ -2,6 +2,7 @@ import { db } from '@tradinggoose/db'
 import { systemAdmin } from '@tradinggoose/db/schema'
 import { eq, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/auth'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const SYSTEM_ADMIN_BOOTSTRAP_LOCK_ID = 3_816_420_551
 
@@ -30,7 +31,7 @@ export async function claimFirstSystemAdmin(userId: string) {
     }
 
     await tx.insert(systemAdmin).values({
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       userId,
     })
 

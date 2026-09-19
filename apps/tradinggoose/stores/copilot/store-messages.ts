@@ -14,6 +14,7 @@ import type {
   CopilotToolExecutionProvenance,
   MessageFileAttachment,
 } from '@/stores/copilot/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type PlanTodo = CopilotStore['planTodos'][number]
 
@@ -419,7 +420,7 @@ export function createUserMessage(
   messageId?: string
 ): CopilotMessage {
   return {
-    id: messageId || crypto.randomUUID(),
+    id: messageId || safeRandomUUID(),
     role: 'user',
     content,
     timestamp: new Date().toISOString(),
@@ -430,7 +431,7 @@ export function createUserMessage(
 
 export function createStreamingMessage(): CopilotMessage {
   return {
-    id: crypto.randomUUID(),
+    id: safeRandomUUID(),
     role: 'assistant',
     content: '',
     timestamp: new Date().toISOString(),

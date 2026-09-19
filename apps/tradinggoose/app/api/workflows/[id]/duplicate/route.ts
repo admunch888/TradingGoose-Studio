@@ -21,6 +21,7 @@ import { createWorkflowSnapshot } from '@/lib/yjs/workflow-session'
 import { createWorkflowRealtimeRequiredResponse } from '@/app/api/workflows/utils'
 import type { Variable } from '@/stores/variables/types'
 import type { WorkflowState } from '@/stores/workflows/workflow/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('WorkflowDuplicateAPI')
 
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const sourceArtifacts = await loadSourceWorkflowRealtimeArtifacts(sourceWorkflowId)
 
-    const newWorkflowId = crypto.randomUUID()
+    const newWorkflowId = safeRandomUUID()
     const now = new Date()
     const resolvedColor = getStableVibrantColor(newWorkflowId)
 

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { devtools, persist } from 'zustand/middleware'
 import { createWithEqualityFn as create } from 'zustand/traditional'
 import type { ChatMessage, ChatStore } from '@/stores/chat/types'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 // MAX across all workflows
 const MAX_MESSAGES = 50
@@ -19,7 +20,7 @@ export const useChatStore = create<ChatStore>()(
             const newMessage: ChatMessage = {
               ...message,
               // Preserve provided id and timestamp if they exist; otherwise generate new ones
-              id: (message as any).id ?? crypto.randomUUID(),
+              id: (message as any).id ?? safeRandomUUID(),
               timestamp: (message as any).timestamp ?? new Date().toISOString(),
             }
 

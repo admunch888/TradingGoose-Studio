@@ -10,6 +10,7 @@ import {
   getTradingProviderOAuthEnvironment,
   getTradingProviderOAuthServiceIds,
 } from '@/providers/trading/providers'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('IbkrGatewayConnection')
 
@@ -166,7 +167,7 @@ export async function connectIbkrGateway({
     return { connectionId: existing.id, ibkrAccountId, environment }
   }
 
-  const connectionId = crypto.randomUUID()
+  const connectionId = safeRandomUUID()
   await db.insert(account).values({
     id: connectionId,
     providerId: serviceId,

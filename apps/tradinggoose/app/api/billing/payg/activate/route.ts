@@ -15,6 +15,7 @@ import { BILLING_ACTIVE_SUBSCRIPTION_STATUSES } from '@/lib/billing/subscription
 import { type BillingTierRecord, isFreeBillingTier } from '@/lib/billing/tiers'
 import { handleSubscriptionCreated } from '@/lib/billing/webhooks/subscription'
 import { createLogger } from '@/lib/logs/console/logger'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('PayAsYouGoActivationAPI')
 const PAYG_ACTIVATION_LOCK_NAMESPACE = 4_126_091
@@ -98,7 +99,7 @@ export async function POST() {
       }
 
       const activationAttemptId =
-        getPaygActivationAttemptId(currentSubscription.metadata) ?? crypto.randomUUID()
+        getPaygActivationAttemptId(currentSubscription.metadata) ?? safeRandomUUID()
 
       if (!getPaygActivationAttemptId(currentSubscription.metadata)) {
         await tx

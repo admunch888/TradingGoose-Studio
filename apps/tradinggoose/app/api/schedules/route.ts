@@ -16,6 +16,7 @@ import {
 } from '@/lib/schedules/utils'
 import { resolveTimezoneState } from '@/lib/timezone/timezone-resolver'
 import { generateRequestId } from '@/lib/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('ScheduledAPI')
 
@@ -298,7 +299,7 @@ export async function POST(req: NextRequest) {
     }
 
     const values = {
-      id: crypto.randomUUID(),
+      id: safeRandomUUID(),
       workflowId,
       blockId,
       cronExpression,

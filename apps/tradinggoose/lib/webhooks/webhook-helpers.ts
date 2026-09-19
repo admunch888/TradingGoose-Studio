@@ -7,6 +7,7 @@ import {
 } from '@/lib/credentials/oauth'
 import { createLogger } from '@/lib/logs/console/logger'
 import { getBaseUrl } from '@/lib/urls/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const teamsLogger = createLogger('TeamsSubscription')
 const webflowLogger = createLogger('WebflowSubscription')
@@ -24,7 +25,7 @@ export class WebhookRevisionConflictError extends Error {}
 export class ExternalSubscriptionCredentialUnavailableError extends Error {}
 const EXTERNAL_SUBSCRIPTION_CREDENTIAL_LOCK_NAMESPACE = 29_403
 
-export const generateMicrosoftTeamsChatCallbackPath = () => `microsoftteams-${crypto.randomUUID()}`
+export const generateMicrosoftTeamsChatCallbackPath = () => `microsoftteams-${safeRandomUUID()}`
 export const isMicrosoftTeamsChatCallbackPath = (path: string) =>
   MICROSOFT_TEAMS_CHAT_CALLBACK_PATH.test(path)
 
@@ -415,7 +416,7 @@ async function processOneAirtableWebhookCleanup(
   if (!target) return { cleaned: true, webhook: current }
   const accessToken = await getAirtableAccessToken(target.credentialId, requestId, scope)
   if (!accessToken) return { cleaned: false, webhook: current }
-  const owner = crypto.randomUUID()
+  const owner = safeRandomUUID()
   const conditions = lifecycle?.phase === 'cleanup' ? [airtableWebhookDeadlineExpired()] : []
   const claim = getWebhookRevision(current, eq(webhookTable.provider, 'airtable'), ...conditions)
   const lease: AirtableWebhookLifecycle = {

@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table'
 import type { ListingResolved } from '@/lib/listing/identity'
 import type { LocaleCode } from '@/i18n/utils'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 type MonitorEntry = {
   id: string
@@ -50,7 +51,7 @@ function createRandomEntry(
   const workflow = workflows[Math.floor(Math.random() * workflows.length)]
 
   return {
-    id: crypto.randomUUID(),
+    id: safeRandomUUID(),
     stock,
     indicator: indicator.name,
     indicatorColor: indicator.color,

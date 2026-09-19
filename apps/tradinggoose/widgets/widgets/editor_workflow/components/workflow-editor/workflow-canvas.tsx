@@ -82,6 +82,7 @@ import {
 } from '@/widgets/widgets/editor_workflow/components/workflow-toolbar/toolbar-add-block-dispatcher'
 import { useWorkflowRoute } from '@/widgets/widgets/editor_workflow/context/workflow-route-context'
 import { useWorkflowI18n } from '@/widgets/widgets/editor_workflow/copy'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('Workflow')
 
@@ -642,7 +643,7 @@ const WorkflowCanvas = React.memo(
         // Special handling for container nodes (loop or parallel)
         if (type === 'loop' || type === 'parallel') {
           // Create a unique ID and name for the container
-          const id = crypto.randomUUID()
+          const id = safeRandomUUID()
 
           const name = getCanonicalUniqueBlockName(type)
 
@@ -659,7 +660,7 @@ const WorkflowCanvas = React.memo(
               const sourceHandle = determineSourceHandle(closestBlock)
 
               autoConnectEdge = {
-                id: crypto.randomUUID(),
+                id: safeRandomUUID(),
                 source: closestBlock.id,
                 target: id,
                 sourceHandle,
@@ -698,7 +699,7 @@ const WorkflowCanvas = React.memo(
         const centerPosition = projectViewportCenter()
 
         // Create a new block with a unique ID
-        const id = crypto.randomUUID()
+        const id = safeRandomUUID()
         const name = getCanonicalUniqueBlockName(type)
 
         // Auto-connect logic
@@ -712,7 +713,7 @@ const WorkflowCanvas = React.memo(
             const sourceHandle = determineSourceHandle(closestBlock)
 
             autoConnectEdge = {
-              id: crypto.randomUUID(),
+              id: safeRandomUUID(),
               source: closestBlock.id,
               target: id,
               sourceHandle,
@@ -786,7 +787,7 @@ const WorkflowCanvas = React.memo(
 
         // Create the trigger block at the center of the viewport
         const centerPosition = projectViewportCenter()
-        const id = crypto.randomUUID()
+        const id = safeRandomUUID()
 
         // Add the trigger block with trigger mode if specified
         addBlock(
@@ -836,7 +837,7 @@ const WorkflowCanvas = React.memo(
           // Special handling for container nodes (loop or parallel)
           if (data.type === 'loop' || data.type === 'parallel') {
             // Create a unique ID and name for the container
-            const id = crypto.randomUUID()
+            const id = safeRandomUUID()
 
             const name = getCanonicalUniqueBlockName(data.type)
 
@@ -869,7 +870,7 @@ const WorkflowCanvas = React.memo(
                   const sourceHandle = determineSourceHandle(closestBlock)
 
                   autoConnectEdge = {
-                    id: crypto.randomUUID(),
+                    id: safeRandomUUID(),
                     source: closestBlock.id,
                     target: id,
                     sourceHandle,
@@ -906,7 +907,7 @@ const WorkflowCanvas = React.memo(
           }
 
           // Generate id and name here so they're available in all code paths
-          const id = crypto.randomUUID()
+          const id = safeRandomUUID()
           const name = getCanonicalUniqueBlockName(data.type)
 
           if (containerDropTarget) {
@@ -943,7 +944,7 @@ const WorkflowCanvas = React.memo(
                     type: closestBlock.type,
                   })
                   autoConnectEdge = {
-                    id: crypto.randomUUID(),
+                    id: safeRandomUUID(),
                     source: closestBlock.id,
                     target: id,
                     sourceHandle,
@@ -960,7 +961,7 @@ const WorkflowCanvas = React.memo(
                     : 'parallel-start-source'
 
                 autoConnectEdge = {
-                  id: crypto.randomUUID(),
+                  id: safeRandomUUID(),
                   source: containerDropTarget.loopId,
                   target: id,
                   sourceHandle: startSourceHandle,
@@ -1009,7 +1010,7 @@ const WorkflowCanvas = React.memo(
                 const sourceHandle = determineSourceHandle(closestBlock)
 
                 autoConnectEdge = {
-                  id: crypto.randomUUID(),
+                  id: safeRandomUUID(),
                   source: closestBlock.id,
                   target: id,
                   sourceHandle,

@@ -6,6 +6,7 @@ import { getSession } from '@/lib/auth'
 import { createLogger } from '@/lib/logs/console/logger'
 import { getUserEntityPermissions } from '@/lib/permissions/utils'
 import { isRootFolderInWorkspace, lockFolderWrites } from './shared'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('FoldersAPI')
 
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate a new ID
-    const id = crypto.randomUUID()
+    const id = safeRandomUUID()
 
     // Use transaction to ensure sortOrder consistency
     const createResult = await db.transaction(async (tx) => {

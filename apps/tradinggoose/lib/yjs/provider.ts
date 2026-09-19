@@ -19,6 +19,7 @@ import {
   YJS_MESSAGE_LIFECYCLE,
 } from '@/lib/yjs/lifecycle-protocol'
 import { YJS_ORIGINS } from '@/lib/yjs/transaction-origins'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 export interface YjsPendingLocalEdits {
   readonly base: Uint8Array
@@ -466,7 +467,7 @@ export async function bootstrapYjsProvider(
     ) {
       return Promise.reject(new Error('Yjs session is not connected for persistence'))
     }
-    const requestId = crypto.randomUUID()
+    const requestId = safeRandomUUID()
     return new Promise((resolve, reject) => {
       const updates = [...localUpdates]
       const settle = (error?: Error, snapshot?: Y.Snapshot) => {
