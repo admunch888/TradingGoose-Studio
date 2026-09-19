@@ -23,6 +23,7 @@ import {
   readEntityListMembersFromDb,
 } from '@/lib/yjs/server/entity-loaders'
 import { refreshEntityListSession } from '@/lib/yjs/server/snapshot-bridge'
+import { safeRandomUUID } from '@/lib/safe-uuid'
 
 const logger = createLogger('McpService')
 
@@ -141,7 +142,7 @@ class McpService {
       throw new McpServerConfigError(error instanceof Error ? error.message : 'Invalid MCP server')
     }
 
-    const entityId = crypto.randomUUID()
+    const entityId = safeRandomUUID()
     const row = await db.transaction(async (tx) => {
       await lockSavedEntityList(tx, 'mcp_server', input.workspaceId)
       await input.beforeInsert?.(tx)
@@ -187,15 +188,16 @@ class McpService {
     workspaceId: string,
     isDeployedContext = true
   ): Promise<McpServerConfig | null> {
+    const bareServerId = serverId.startsWith('mcp-') ? serverId.slice('mcp-'.length) : serverId
     try {
       const [rawFields, members] = await Promise.all([
-        readSavedEntityFieldsForExecution('mcp_server', serverId, workspaceId, isDeployedContext),
+        readSavedEntityFieldsForExecution('mcp_server', bareServerId, workspaceId, isDeployedContext),
         readEntityListMembersFromDb('mcp_server', workspaceId),
       ])
       const fields = normalizeEntityFields('mcp_server', rawFields)
-      const name = members.find((member) => member.id === serverId)?.name
+      const name = members.find((member) => member.id === bareServerId)?.name
       if (name === undefined) return null
-      return fields.enabled === false ? null : this.toServerConfig(serverId, name, fields)
+      return fields.enabled === false ? null : this.toServerConfig(bareServerId, name, fields)
     } catch (error) {
       if (
         typeof error === 'object' &&

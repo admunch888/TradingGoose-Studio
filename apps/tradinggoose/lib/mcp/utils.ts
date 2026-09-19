@@ -139,8 +139,16 @@ export function parseMcpToolId(toolId: string): { serverId: string; toolName: st
     throw new Error(`Invalid MCP tool ID format: ${toolId}. Expected: mcp-serverId-toolName`)
   }
 
-  const serverId = `${parts[0]}-${parts[1]}`
-  const toolName = parts.slice(2).join('-')
+  const rest = toolId.slice('mcp-'.length)
+  const uuidMatch = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})-(.+)$/.exec(rest)
+  if (uuidMatch) {
+    return { serverId: `mcp-${uuidMatch[1]}`, toolName: uuidMatch[2] }
+  }
+  const lastHyphen = rest.lastIndexOf('-')
+  if (lastHyphen <= 0) {
+    throw new Error(`Invalid MCP tool ID format: ${toolId}. Expected: mcp-serverId-toolName`)
+  }
+  return { serverId: `mcp-${rest.slice(0, lastHyphen)}`, toolName: rest.slice(lastHyphen + 1) }
 
   return { serverId, toolName }
 }

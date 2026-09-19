@@ -414,16 +414,16 @@ export class McpClient {
       throw new McpError(`HTTP request failed: ${response.status} ${response.statusText}`)
     }
 
+    const sessionId = response.headers.get('Mcp-Session-Id')
+    if (sessionId && !this.mcpSessionId) {
+      this.mcpSessionId = sessionId
+      logger.info(`[${this.config.name}] Received MCP Session ID: ${sessionId}`)
+    }
+
     if ('id' in request) {
       const contentType = response.headers.get('Content-Type')
 
       if (contentType?.includes('application/json')) {
-        const sessionId = response.headers.get('Mcp-Session-Id')
-        if (sessionId && !this.mcpSessionId) {
-          this.mcpSessionId = sessionId
-          logger.info(`[${this.config.name}] Received MCP Session ID: ${sessionId}`)
-        }
-
         const responseData: JsonRpcResponse = await response.json()
         this.handleResponse(responseData)
       } else if (contentType?.includes('text/event-stream')) {
