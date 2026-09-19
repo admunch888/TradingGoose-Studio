@@ -75,3 +75,9 @@ helm/tradinggoose/test
 i18n.cache
 i18n.lock
 *.react-email
+
+# Local runtime artifacts (CA bundle used for the compose mount; generated per deploy)
+.runtime-certs/
+
+# Downloaded model weights (~1GB) - never commit these
+services/kronos-inference/models/
