@@ -108,6 +108,10 @@ const options = {
   // A CPU forecast of 512 bars takes tens of seconds; the app's default is far
   // shorter than a backtest window needs.
   timeoutMs: num('timeout-ms', 10 * 60 * 1000),
+  // A market-data GET is not a forecast window. Without a limit here a stalled
+  // connection hangs the run before its first line prints, which reads as a slow
+  // model rather than a dead one - observed live, and the reason this exists.
+  yahooTimeoutMs: num('yahoo-timeout-ms', 30 * 1000),
 }
 
 async function loadBars(): Promise<Bar[]> {
@@ -121,7 +125,18 @@ async function loadBars(): Promise<Bar[]> {
   const url =
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(options.symbol)}` +
     `?interval=${options.interval}&range=${options.range}`
-  const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(options.yahooTimeoutMs),
+    })
+  } catch (error) {
+    throw new Error(
+      `Yahoo did not answer for ${options.symbol} within ${options.yahooTimeoutMs}ms: ` +
+        (error instanceof Error ? error.message : String(error))
+    )
+  }
   if (!response.ok) {
     throw new Error(
       `Yahoo returned ${response.status} ${response.statusText} for ${options.symbol}`
