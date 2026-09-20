@@ -107,6 +107,7 @@ function safeCreateEnv() {
     KRONOS_INTERNAL_TOKEN: z.string().min(32).optional(),             // Bearer token for the Kronos service
     KRONOS_TIMEOUT_MS: z.number().int().positive().optional(),       // Timeout for Kronos requests in ms
     KRONOS_MAX_HORIZON: z.number().int().positive().optional(),      // Max forecast horizon in bars
+    KRONOS_MAX_SAMPLES: z.number().int().positive().optional(),      // Max samples per forecast (ensemble size)
 
     // IBKR Client Portal Gateway pacing & retry (READ-ONLY market data only)
     IBKR_MARKET_MIN_INTERVAL_MS: z.number().int().nonnegative().optional(),     // Min spacing between gateway market-data calls (default 350)

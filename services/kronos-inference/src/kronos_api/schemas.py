@@ -60,7 +60,10 @@ class MarketBar(ApiModel):
 class ForecastParameters(ApiModel):
     temperature: float = Field(default=1.0, gt=0, le=5)
     top_p: float = Field(default=0.9, gt=0, le=1)
-    sample_count: int = Field(default=1, ge=1, le=1)
+    # The upper bound is KRONOS_MAX_SAMPLES, which a Field constraint cannot read out
+    # of the environment, so the endpoint enforces it against settings and says which
+    # variable it came from instead of emitting a bare number.
+    sample_count: int = Field(default=1, ge=1)
 
 
 class ForecastRequest(ApiModel):
@@ -111,6 +114,14 @@ class ForecastRequest(ApiModel):
         return self
 
 
+# Where the sampled closes landed at one step: the 10th and 90th percentile. Only present
+# on ensemble forecasts - a one-sample request omits it rather than reporting a zero-width
+# band, which a reader would take for a real result.
+class ForecastBand(ApiModel):
+    low: float
+    high: float
+
+
 class ForecastPoint(ApiModel):
     timestamp: datetime
     open: float
@@ -119,6 +130,7 @@ class ForecastPoint(ApiModel):
     close: float
     volume: float
     amount: float
+    band: ForecastBand | None = None
 
 
 class ModelMetadata(ApiModel):

@@ -39,6 +39,7 @@ Service (environment prefix `KRONOS_`):
 | `KRONOS_MAX_CONTEXT` | `512` | History bars the model sees. |
 | `KRONOS_MAX_QUEUE` | `8` | Requests waiting beyond this get 429. |
 | `KRONOS_INFERENCE_CONCURRENCY` | `1` | Parallel inferences. |
+| `KRONOS_MAX_SAMPLES` | `16` | Largest `parameters.sampleCount` accepted. Higher requests are refused, not clamped. |
 | `KRONOS_WARMUP` | `true` | Runs one forecast at startup. |
 
 App:
@@ -66,6 +67,20 @@ App:
   - Intraday forecasts stay within the first and last bar times seen in the history. This needs at least two days of intraday bars.
   - Daily and weekly steps keep the bar's local time across DST changes.
   - Exchange holidays and half days are not modelled.
+
+## Sampling and uncertainty
+
+`POST /v1/forecast` accepts `parameters.sampleCount` (default `1`, largest accepted value is `KRONOS_MAX_SAMPLES`, default `16`). A request above the cap is refused with 422 rather than clamped, because the sample count is what the caller is paying for.
+
+- `sampleCount = 1` is a single forecast: one path, and every `forecast` point carries `open`, `high`, `low`, `close`, `volume`, `amount`.
+- `sampleCount > 1` runs that many independent sampled paths, and each `forecast` point becomes the **median** of the samples at that step, field by field. The median rather than the mean, so that one wild sample does not move the path.
+- Each point then also carries `band: { low, high }`: the 10th and 90th percentile of the sampled closes at that step, taken across samples at the same step. The band is **omitted when `sampleCount = 1`**, because a one-sample band is zero-width and would read as a real, confident result. A caller that sees no `band` should report "no uncertainty estimate" rather than zero width.
+- `band.high` and `band.low` are the raw percentiles of the sampled closes, so they are not widened by the candle reconciliation that keeps each point's `high >= max(open, close)`. The median close always lies inside the band.
+- Cost is linear in `sampleCount`: the samples are replicated through the batch dimension of a single inference, so 16 samples take roughly 16x the time and memory of one. Raise `KRONOS_MAX_SAMPLES` with that in mind.
+
+## Vendored model
+
+`third_party/kronos/` is a copy of [Kronos](https://github.com/shiyu-coder/Kronos) at the revision recorded in `third_party/kronos/UPSTREAM_REVISION`. `model/kronos.py` carries one local patch, marked with `LOCAL DIVERGENCE` comments: `KronosPredictor.predict(..., return_samples=True)` returns the per-sample array instead of the average upstream computes, which is what the band is built from. Every other caller, including `predict_batch`, takes the default and behaves exactly as upstream.
 
 ## Tests
 

@@ -1,10 +1,29 @@
 import math
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from kronos_api.config import Settings
+from kronos_api.ensemble import SAMPLE_FIELDS, summarise_samples
 from kronos_api.schemas import ForecastRequest
+
+
+def _build_point(timestamp: datetime, values: dict[str, float]) -> dict[str, Any]:
+    """Shape one forecast bar, shared by the single-sample and ensemble paths."""
+    floats = [float(values[field]) for field in SAMPLE_FIELDS]
+    if not all(math.isfinite(value) for value in floats):
+        raise RuntimeError("Kronos returned non-finite forecast values")
+    return {
+        "timestamp": timestamp.to_pydatetime(),
+        "open": float(values["open"]),
+        "high": float(values["high"]),
+        "low": float(values["low"]),
+        "close": float(values["close"]),
+        # Traded size is never negative, and nothing in the model enforces that.
+        "volume": max(0.0, float(values["volume"])),
+        "amount": max(0.0, float(values["amount"])),
+    }
 
 
 class KronosRuntime:
@@ -84,31 +103,50 @@ class KronosRuntime:
         historical_local = historical.dt.tz_convert(request.timezone)
         future_local = future.dt.tz_convert(request.timezone)
 
-        predicted = self._predictor.predict(
-            df=frame,
-            x_timestamp=historical_local,
-            y_timestamp=future_local,
-            pred_len=len(future_local),
-            T=request.parameters.temperature,
-            top_p=request.parameters.top_p,
-            sample_count=request.parameters.sample_count,
-            verbose=False,
-        )
+        sample_count = request.parameters.sample_count
+        paths: list[dict[str, Any]]
+        bands: list[dict[str, Any]] = []
+        if sample_count == 1:
+            # One sample is the call this service has always made: the model's own single
+            # path, whose frame is already what the response wants.
+            predicted = self._predictor.predict(
+                df=frame,
+                x_timestamp=historical_local,
+                y_timestamp=future_local,
+                pred_len=len(future_local),
+                T=request.parameters.temperature,
+                top_p=request.parameters.top_p,
+                sample_count=sample_count,
+                verbose=False,
+            )
+            paths = [
+                {field: getattr(row, field) for field in SAMPLE_FIELDS}
+                for row in predicted.itertuples(index=False)
+            ]
+        else:
+            # Above one sample, ask for the sampled paths rather than the single averaged
+            # one upstream would return, so the spread is still available to report.
+            # The samples are replicated through the batch dimension inside the model, so
+            # this costs about `sample_count` times the one-sample call.
+            samples = self._predictor.predict(
+                df=frame,
+                x_timestamp=historical_local,
+                y_timestamp=future_local,
+                pred_len=len(future_local),
+                T=request.parameters.temperature,
+                top_p=request.parameters.top_p,
+                sample_count=sample_count,
+                verbose=False,
+                return_samples=True,
+            )
+            paths, bands = summarise_samples(samples)
 
         points: list[dict[str, Any]] = []
-        for timestamp, row in zip(future, predicted.itertuples(index=False)):
-            values = [row.open, row.high, row.low, row.close, row.volume, row.amount]
-            if not all(math.isfinite(float(value)) for value in values):
-                raise RuntimeError("Kronos returned non-finite forecast values")
-            points.append(
-                {
-                    "timestamp": timestamp.to_pydatetime(),
-                    "open": float(row.open),
-                    "high": float(row.high),
-                    "low": float(row.low),
-                    "close": float(row.close),
-                    "volume": max(0.0, float(row.volume)),
-                    "amount": max(0.0, float(row.amount)),
-                }
-            )
+        for index, (timestamp, values) in enumerate(zip(future, paths)):
+            point = _build_point(timestamp, values)
+            if bands:
+                # Absent at one sample (see summarise_samples): an omitted band says "no
+                # uncertainty estimate", a zero-width one would claim certainty.
+                point["band"] = bands[index]
+            points.append(point)
         return points

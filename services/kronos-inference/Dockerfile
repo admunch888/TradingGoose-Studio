@@ -49,6 +49,7 @@ COPY --from=weights /models/kronos-tokenizer-base /models/kronos-tokenizer-base
 LABEL org.opencontainers.image.title="TradingGoose Kronos Inference" \
       org.opencontainers.image.description="Private Kronos-base forecasting service for TradingGoose" \
       kronos.source.revision="67b630e67f6a18c9e9be918d9b4337c960db1e9a" \
+      kronos.source.divergence="LOCAL DIVERGENCE markers in model/kronos.py (ensemble samples)" \
       kronos.model.name="NeoQuasar/Kronos-base" \
       kronos.model.revision="2b554741eca47781b64468546e77fef3e85130e6" \
       kronos.tokenizer.revision="0e0117387f39004a9016484a186a908917e22426"

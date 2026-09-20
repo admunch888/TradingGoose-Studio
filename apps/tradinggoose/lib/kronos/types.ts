@@ -46,7 +46,9 @@ export const ForecastRequestSchema = z
       .object({
         temperature: z.number().positive().max(5).default(1.0),
         topP: z.number().positive().max(1).default(0.9),
-        sampleCount: z.number().int().positive().max(1).default(1),
+        // The upper bound is KRONOS_MAX_SAMPLES, which the client enforces: an env
+        // value cannot be read from a schema literal. Above it the service refuses.
+        sampleCount: z.number().int().positive().default(1),
       })
       .default({ temperature: 1.0, topP: 0.9, sampleCount: 1 }),
   })
@@ -78,6 +80,13 @@ export const ForecastRequestSchema = z
 
 export type ForecastRequest = z.infer<typeof ForecastRequestSchema>
 
+const ForecastBandSchema = z.object({
+  low: z.number(),
+  high: z.number(),
+})
+
+export type ForecastBand = z.infer<typeof ForecastBandSchema>
+
 export const ForecastPointSchema = z.object({
   timestamp: z.string(),
   open: z.number(),
@@ -86,6 +95,10 @@ export const ForecastPointSchema = z.object({
   close: z.number(),
   volume: z.number(),
   amount: z.number(),
+  // The 10th/90th percentile of the sampled closes at this step. Absent, not
+  // null, when the forecast ran a single sample (`response_model_exclude_none`),
+  // and absent entirely from a service that does not compute bands.
+  band: ForecastBandSchema.optional(),
 })
 
 export const ForecastResponseSchema = z.object({
@@ -141,6 +154,7 @@ export const KronosErrorCode = {
   TOO_FEW_BARS: 'KRONOS_TOO_FEW_BARS',
   TOO_MANY_BARS: 'KRONOS_TOO_MANY_BARS',
   HORIZON_EXCEEDED: 'KRONOS_HORIZON_EXCEEDED',
+  SAMPLE_LIMIT_EXCEEDED: 'KRONOS_SAMPLE_LIMIT_EXCEEDED',
   MARKET_DATA_STALE: 'KRONOS_MARKET_DATA_STALE',
 } as const
 

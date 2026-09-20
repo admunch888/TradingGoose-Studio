@@ -19,6 +19,12 @@
  *
  * Results are appended per window and the run resumes, so an interruption costs
  * minutes rather than the whole measurement.
+ *
+ * `--samples N` (default 1) asks the service for N samples per window: the path
+ * scored is their median, and each window carries a band of the 10th/90th
+ * percentile closes that the summary reports as band coverage. The service caps N
+ * at its KRONOS_MAX_SAMPLES (16 by default) and refuses more, failing every
+ * window; the band is written to the record, so resuming keeps scoring it.
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -33,6 +39,7 @@ import {
   type Bar,
   barsFromYahooChart,
   buildWindowRequest,
+  type ForecastPoint,
   formatProgress,
   normaliseBars,
   observationFrom,
@@ -53,7 +60,7 @@ import {
 async function requestForecast(
   request: unknown,
   timeoutMs: number
-): Promise<{ forecast: Array<{ close: number }> }> {
+): Promise<{ forecast: ForecastPoint[] }> {
   const url = (process.env.KRONOS_INTERNAL_URL || '').replace(/\/$/, '')
   const token = process.env.KRONOS_INTERNAL_TOKEN
   if (!url || !token) {
@@ -77,7 +84,7 @@ async function requestForecast(
   if (!Array.isArray(body.forecast)) {
     throw new Error('Kronos response carried no forecast array')
   }
-  return body as { forecast: Array<{ close: number }> }
+  return body as { forecast: ForecastPoint[] }
 }
 
 const arg = (name: string, fallback?: string): string | undefined => {
@@ -168,7 +175,7 @@ function report(scores: ForecastScore[], bars: number, skipped: number) {
       `  band coverage       ${percent(summary.bandCoverage.rate)}  (${summary.bandCoverage.covered}/${summary.bandCoverage.evaluated})`
     )
   } else {
-    // sample_count is capped at 1 until the ensemble work lands, so there is no
+    // The run drew one sample per window (--samples 1), so the service computed no
     // band to check. Saying so beats printing a zero that reads like a result.
     lines.push('  band coverage       n/a - forecasts carried no ensemble band')
   }
@@ -246,11 +253,15 @@ async function main() {
               }),
               options.timeoutMs
             )
+            const lastPoint = response.forecast[response.forecast.length - 1]
             const next: RunRecord = {
               originIndex: window.originIndex,
               lastBar: window.context[window.context.length - 1].timestamp,
               predictedCloses: response.forecast.map((point) => point.close),
               realizedCloses: window.realized.map((bar) => bar.close),
+              // Kept per record so a resumed run scores the band too, instead of
+              // reading the whole file back as bandless.
+              ...(lastPoint?.band ? { terminalBand: lastPoint.band } : {}),
             }
             appendFileSync(options.out, `${JSON.stringify(next)}\n`)
             return next
@@ -266,13 +277,15 @@ async function main() {
     if (!record) {
       skipped++
     } else {
-      const score = scoreForecast(
-        observationFrom(
-          window,
-          record.predictedCloses.map((close) => ({ close })),
-          record.regime
-        )
-      )
+      const forecast: ForecastPoint[] = record.predictedCloses.map((close) => ({ close }))
+      if (record.terminalBand && forecast.length > 0) {
+        // observationFrom reads the band off the terminal point.
+        forecast[forecast.length - 1] = {
+          ...forecast[forecast.length - 1],
+          band: record.terminalBand,
+        }
+      }
+      const score = scoreForecast(observationFrom(window, forecast, record.regime))
       if (score) scores.push(score)
       else skipped++
     }
