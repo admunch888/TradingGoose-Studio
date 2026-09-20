@@ -93,9 +93,31 @@ describe('band coverage', () => {
     expect(outside?.withinBand).toBe(false)
   })
 
+  it('is the share of banded forecasts whose realized close landed inside', () => {
+    // The realized terminal close is 6025 on the shared observation.
+    const summary = summariseForecastScores(
+      scores([
+        { terminalBand: { low: 6000, high: 6050 } },
+        { terminalBand: { low: 6040, high: 6060 } },
+        { terminalBand: { low: 6000, high: 6050 } },
+      ])
+    )
+
+    expect(summary.bandCoverage).toEqual({ evaluated: 3, covered: 2, rate: 2 / 3 })
+  })
+
   it('is absent, not false, when the forecast carried no band', () => {
     expect(scoreForecast(observation())?.withinBand).toBeNull()
     expect(summariseForecastScores(scores([{}])).bandCoverage).toBeNull()
+  })
+
+  it('counts only the banded forecasts, so a mixed run is not diluted by the rest', () => {
+    const summary = summariseForecastScores(
+      scores([{}, { terminalBand: { low: 6000, high: 6050 } }])
+    )
+
+    expect(summary.scored).toBe(2)
+    expect(summary.bandCoverage).toEqual({ evaluated: 1, covered: 1, rate: 1 })
   })
 })
 

@@ -117,7 +117,9 @@ export function logForecastRequest(
     parameters: {
       temperature: request.parameters.temperature,
       topP: request.parameters.topP,
-      sampleCount: request.parameters.sampleCount,
+      // What the service ran, not what was asked for: it echoes the count it used,
+      // and a request cannot be the record of a forecast that never happened.
+      sampleCount: response.parameters.sampleCount,
     },
     diagnostics: {
       volumeImputed: response.diagnostics.volumeImputed,

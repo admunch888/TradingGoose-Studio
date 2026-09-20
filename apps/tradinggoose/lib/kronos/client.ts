@@ -11,6 +11,7 @@ const logger = createLogger('KronosClient')
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_HORIZON = 32
+const DEFAULT_MAX_SAMPLES = 16
 
 export interface KronosCallOptions {
   signal?: AbortSignal
@@ -41,6 +42,7 @@ export async function callKronosForecast(
   const token = readEnv('KRONOS_INTERNAL_TOKEN')
   const timeoutMs = getNumber('KRONOS_TIMEOUT_MS') ?? DEFAULT_TIMEOUT_MS
   const maxHorizon = getNumber('KRONOS_MAX_HORIZON') ?? DEFAULT_MAX_HORIZON
+  const maxSamples = getNumber('KRONOS_MAX_SAMPLES') ?? DEFAULT_MAX_SAMPLES
 
   if (!enabled) {
     throw new KronosError(KronosErrorCode.DISABLED, 'Kronos forecasting is not enabled')
@@ -61,6 +63,12 @@ export async function callKronosForecast(
     throw new KronosError(
       KronosErrorCode.HORIZON_EXCEEDED,
       `Forecast horizon ${request.futureTimestamps.length} exceeds the configured maximum of ${maxHorizon}`
+    )
+  }
+  if (request.parameters.sampleCount > maxSamples) {
+    throw new KronosError(
+      KronosErrorCode.SAMPLE_LIMIT_EXCEEDED,
+      `Forecast sampleCount ${request.parameters.sampleCount} exceeds the configured maximum of ${maxSamples}`
     )
   }
 
@@ -143,4 +151,8 @@ export function isKronosEnabled(): boolean {
 
 export function getMaxHorizon(): number {
   return getNumber('KRONOS_MAX_HORIZON') ?? DEFAULT_MAX_HORIZON
+}
+
+export function getMaxSamples(): number {
+  return getNumber('KRONOS_MAX_SAMPLES') ?? DEFAULT_MAX_SAMPLES
 }

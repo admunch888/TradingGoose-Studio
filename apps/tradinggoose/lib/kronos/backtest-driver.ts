@@ -19,8 +19,32 @@ export interface Bar {
   volume?: number
 }
 
+/** 10th/90th percentile of the sampled closes, as the service reports them. */
+export interface Band {
+  low: number
+  high: number
+}
+
+/** A forecast point, with the band the ensemble put on it when it ran more than one sample. */
+export interface ForecastPoint {
+  close: number
+  band?: Band
+}
+
 const finite = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+/**
+ * A band only counts if both edges are numbers. A half-written line or an older
+ * record carrying something else is treated as no band at all, which scores as
+ * unscored rather than as a band that happened to be missed.
+ */
+const readBand = (value: unknown): Band | undefined => {
+  const band = value as { low?: unknown; high?: unknown } | null | undefined
+  const low = finite(band?.low)
+  const high = finite(band?.high)
+  return low !== undefined && high !== undefined ? { low, high } : undefined
+}
 
 /**
  * Yahoo's chart response, which offers 60 days of 15-minute bars against the 30
@@ -136,20 +160,27 @@ export const buildWindowRequest = (
 /** Turn a forecast and its window into something `scoreForecast` can read. */
 export const observationFrom = (
   window: { context: Bar[]; realized: Bar[] },
-  forecast: Array<{ close: number }>,
+  forecast: ForecastPoint[],
   regime?: string
-): ForecastObservation => ({
-  lastClose: window.context[window.context.length - 1].close,
-  predictedCloses: forecast.map((point) => point.close),
-  realizedCloses: window.realized.map((bar) => bar.close),
-  ...(regime ? { regime } : {}),
-})
+): ForecastObservation => {
+  const terminalBand = readBand(forecast[forecast.length - 1]?.band)
+
+  return {
+    lastClose: window.context[window.context.length - 1].close,
+    predictedCloses: forecast.map((point) => point.close),
+    realizedCloses: window.realized.map((bar) => bar.close),
+    ...(terminalBand ? { terminalBand } : {}),
+    ...(regime ? { regime } : {}),
+  }
+}
 
 export interface RunRecord {
   originIndex: number
   lastBar: string
   predictedCloses: number[]
   realizedCloses: number[]
+  /** Band on the terminal forecast point, when the run that wrote the record had one. */
+  terminalBand?: Band
   regime?: string
 }
 
@@ -168,7 +199,8 @@ export const parseRunRecords = (jsonl: string): Map<number, RunRecord> => {
     try {
       const record = JSON.parse(trimmed) as RunRecord
       if (typeof record.originIndex === 'number' && Array.isArray(record.predictedCloses)) {
-        records.set(record.originIndex, record)
+        // Carry the band through, or a resumed run scores every window bandlessly.
+        records.set(record.originIndex, { ...record, terminalBand: readBand(record.terminalBand) })
       }
     } catch {
       // A half-written final line is expected after an interrupted run.

@@ -4,10 +4,12 @@
  * service reject every window, or a crash that loses finished work.
  */
 import { describe, expect, it } from 'vitest'
+import { scoreForecast } from '@/lib/kronos/backtest'
 import {
   type Bar,
   barsFromYahooChart,
   buildWindowRequest,
+  type ForecastPoint,
   formatProgress,
   normaliseBars,
   observationFrom,
@@ -143,17 +145,32 @@ describe('building a window request', () => {
 })
 
 describe('turning a forecast into an observation', () => {
-  it('measures direction from the last bar the model saw', () => {
-    const window = {
-      context: [bar('2026-01-02T14:30:00.000Z', 100), bar('2026-01-02T14:45:00.000Z', 101)],
-      realized: [bar('2026-01-02T15:00:00.000Z', 105)],
-    }
+  const window = {
+    context: [bar('2026-01-02T14:30:00.000Z', 100), bar('2026-01-02T14:45:00.000Z', 101)],
+    realized: [bar('2026-01-02T15:00:00.000Z', 105)],
+  }
 
+  it('measures direction from the last bar the model saw', () => {
     const observation = observationFrom(window, [{ close: 104 }])
 
     expect(observation.lastClose).toBe(101)
     expect(observation.predictedCloses).toEqual([104])
     expect(observation.realizedCloses).toEqual([105])
+  })
+
+  it('takes the band from the terminal point, which is the bar the signal acts on', () => {
+    const observation = observationFrom(window, [
+      { close: 102, band: { low: 99, high: 103 } },
+      { close: 104, band: { low: 100, high: 108 } },
+    ])
+
+    expect(observation.terminalBand).toEqual({ low: 100, high: 108 })
+  })
+
+  it('leaves the band unset when the forecast ran a single sample', () => {
+    const observation = observationFrom(window, [{ close: 102 }, { close: 104 }])
+
+    expect(observation.terminalBand).toBeUndefined()
   })
 })
 
@@ -179,6 +196,53 @@ describe('resuming an interrupted run', () => {
 
   it('reads an empty file as nothing done', () => {
     expect(parseRunRecords('').size).toBe(0)
+  })
+
+  it('keeps the band a window was scored with', () => {
+    const record = {
+      originIndex: 4,
+      lastBar: 'x',
+      predictedCloses: [6030],
+      realizedCloses: [6025],
+      terminalBand: { low: 6010, high: 6040 },
+    }
+
+    expect(parseRunRecords(JSON.stringify(record)).get(4)?.terminalBand).toEqual({
+      low: 6010,
+      high: 6040,
+    })
+  })
+
+  it('leaves the band unset for a window that ran one sample', () => {
+    expect(parseRunRecords(line(0)).get(0)?.terminalBand).toBeUndefined()
+  })
+
+  it('scores a resumed window on its band rather than losing it', () => {
+    // The failure this guards: a run that restarts scores every window it already
+    // has as bandless, and reports no coverage however many bands it collected.
+    const record = parseRunRecords(
+      JSON.stringify({
+        originIndex: 4,
+        lastBar: 'x',
+        predictedCloses: [101, 105],
+        realizedCloses: [100, 104],
+        terminalBand: { low: 104, high: 106 },
+      })
+    ).get(4)
+    const forecast: ForecastPoint[] = (record?.predictedCloses ?? []).map((close) => ({ close }))
+    forecast[forecast.length - 1] = { ...forecast[forecast.length - 1], band: record?.terminalBand }
+
+    const score = scoreForecast(
+      observationFrom(
+        {
+          context: [bar('2026-01-02T14:45:00.000Z', 100)],
+          realized: [bar('2026-01-02T15:00:00.000Z', 102), bar('2026-01-02T15:15:00.000Z', 104)],
+        },
+        forecast
+      )
+    )
+
+    expect(score?.withinBand).toBe(true)
   })
 })
 

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
 import {
   callKronosForecast,
+  getMaxSamples,
   isKronosEnabled,
   type KronosCallContext,
   KronosError,
@@ -398,6 +399,7 @@ const mapKronosError = (error: KronosError): Response => {
     case KronosErrorCode.TIMEOUT:
       return NextResponse.json({ error: error.message }, { status: 504 })
     case KronosErrorCode.HORIZON_EXCEEDED:
+    case KronosErrorCode.SAMPLE_LIMIT_EXCEEDED:
     case KronosErrorCode.TOO_FEW_BARS:
     case KronosErrorCode.TOO_MANY_BARS:
       return NextResponse.json({ error: error.message }, { status: 422 })
@@ -438,6 +440,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Invalid forecast request' },
       { status: 400 }
+    )
+  }
+
+  // The service refuses a count above its own KRONOS_MAX_SAMPLES with 422. Refusing
+  // it here gives the same answer without the round trip, and names the cap the way
+  // the service does.
+  const maxSamples = getMaxSamples()
+  if (forecastRequest.parameters.sampleCount > maxSamples) {
+    return NextResponse.json(
+      {
+        error:
+          `sampleCount must be at most ${maxSamples} (KRONOS_MAX_SAMPLES), ` +
+          `got ${forecastRequest.parameters.sampleCount}`,
+      },
+      { status: 422 }
     )
   }
 

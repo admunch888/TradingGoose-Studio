@@ -4,7 +4,14 @@
 
 import { NextRequest } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ForecastRequestSchema, type ForecastResponse } from '@/lib/kronos/types'
+import { callKronosForecast } from '@/lib/kronos/client'
+import {
+  type ForecastRequest,
+  ForecastRequestSchema,
+  type ForecastResponse,
+  ForecastResponseSchema,
+  KronosErrorCode,
+} from '@/lib/kronos/types'
 
 const mocks = vi.hoisted(() => ({
   checkAuth: vi.fn(),
@@ -73,7 +80,16 @@ const buildBlockPayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const buildForecastResponse = (): ForecastResponse => ({
+// `sampleCount` above 1 is the ensemble: the service returns the median path and puts a
+// 10th/90th percentile band on every point. At one sample the key is absent, not null,
+// which is why the default fixture below carries none.
+const BAND = { low: 139.5, high: 141.5 }
+
+const buildForecastResponse = ({
+  sampleCount = 1,
+}: {
+  sampleCount?: number
+} = {}): ForecastResponse => ({
   requestId: 'kronos-forecast-test-1',
   forecast: [
     {
@@ -84,6 +100,7 @@ const buildForecastResponse = (): ForecastResponse => ({
       close: 140.5,
       volume: 1040,
       amount: 50_040,
+      ...(sampleCount > 1 ? { band: BAND } : {}),
     },
   ],
   model: {
@@ -102,7 +119,7 @@ const buildForecastResponse = (): ForecastResponse => ({
     barCount: 40,
     lastCompletedBarTimestamp: '2026-01-05T17:45:00.000Z',
   },
-  parameters: { temperature: 1, topP: 0.9, sampleCount: 1 },
+  parameters: { temperature: 1, topP: 0.9, sampleCount },
   diagnostics: {
     volumeImputed: false,
     amountImputed: false,
@@ -118,6 +135,24 @@ const buildRequest = (body: unknown, query = '?workspaceId=workspace-1') =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+
+/** A request the client accepts, so the only thing left to refuse is the sample count. */
+const kronosRequest = (sampleCount: number): ForecastRequest => ({
+  requestId: 'kronos-forecast-test-1',
+  listing: { listingId: 'AAPL', listingType: 'default' },
+  interval: '5m',
+  timezone: 'America/New_York',
+  normalizationMode: 'raw',
+  history: Array.from({ length: 32 }, (_, index) => ({
+    timestamp: new Date(BASE_TS + index * INTERVAL_MS).toISOString(),
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+  })),
+  futureTimestamps: [new Date(BASE_TS + 32 * INTERVAL_MS).toISOString()],
+  parameters: { temperature: 1, topP: 0.9, sampleCount },
+})
 
 describe('kronos forecast route', () => {
   beforeEach(() => {
@@ -224,6 +259,110 @@ describe('kronos forecast route', () => {
       unknown,
     ]
     expect(request.parameters).toEqual({ temperature: 1, topP: 0.9, sampleCount: 1 })
+  })
+
+  it('carries a sampleCount from the tool body through to the service request', async () => {
+    const body = kronosForecastTool.request.body?.({
+      listing,
+      marketSeries: buildMarketSeries(40),
+      interval: '5m',
+      timezone: 'America/New_York',
+      normalizationMode: 'raw',
+      horizonBars: 12,
+      parameters: { temperature: 1, topP: 0.9, sampleCount: 4 },
+    })
+
+    const response = await POST(buildRequest(JSON.parse(JSON.stringify(body))))
+
+    expect(response.status).toBe(200)
+    const [request] = mocks.callKronosForecast.mock.calls[0] as [
+      { parameters: { sampleCount: number } },
+      unknown,
+    ]
+    expect(request.parameters.sampleCount).toBe(4)
+  })
+
+  describe('the sample ceiling', () => {
+    it('takes a sampleCount up to KRONOS_MAX_SAMPLES and forwards it', async () => {
+      vi.stubEnv('KRONOS_MAX_SAMPLES', '4')
+
+      const response = await POST(
+        buildRequest(buildBlockPayload({ parameters: { sampleCount: 4 } }))
+      )
+
+      expect(response.status).toBe(200)
+      const [request] = mocks.callKronosForecast.mock.calls[0] as [
+        { parameters: { sampleCount: number } },
+        unknown,
+      ]
+      expect(request.parameters.sampleCount).toBe(4)
+    })
+
+    it('refuses one above it with 422, naming the cap, without calling the service', async () => {
+      // The service answers 422 for the same request; refusing it here gives the same
+      // answer without the round trip.
+      vi.stubEnv('KRONOS_MAX_SAMPLES', '4')
+
+      const response = await POST(
+        buildRequest(buildBlockPayload({ parameters: { sampleCount: 5 } }))
+      )
+
+      expect(response.status).toBe(422)
+      expect(await response.json()).toEqual({
+        error: 'sampleCount must be at most 4 (KRONOS_MAX_SAMPLES), got 5',
+      })
+      expect(mocks.callKronosForecast).not.toHaveBeenCalled()
+    })
+
+    it('defaults to 16 when KRONOS_MAX_SAMPLES is not set', async () => {
+      const at = await POST(buildRequest(buildBlockPayload({ parameters: { sampleCount: 16 } })))
+      const above = await POST(buildRequest(buildBlockPayload({ parameters: { sampleCount: 17 } })))
+
+      expect(at.status).toBe(200)
+      expect(above.status).toBe(422)
+    })
+
+    it('refuses it in the client too, the layer the horizon cap is enforced at', async () => {
+      // The route answers before the client sees the request, so this is the only path
+      // that reaches the client's own check - the same one KRONOS_MAX_HORIZON uses.
+      vi.stubEnv('KRONOS_MAX_SAMPLES', '4')
+
+      await expect(callKronosForecast(kronosRequest(5))).rejects.toMatchObject({
+        code: KronosErrorCode.SAMPLE_LIMIT_EXCEEDED,
+      })
+    })
+  })
+
+  describe('the response wire', () => {
+    it('keeps the band optional, so a service that returns none still validates', async () => {
+      // One sample: the key is absent, not null (response_model_exclude_none).
+      mocks.callKronosForecast.mockResolvedValue(buildForecastResponse())
+      const withoutBand = await POST(buildRequest(buildBlockPayload()))
+
+      mocks.callKronosForecast.mockResolvedValue(buildForecastResponse({ sampleCount: 4 }))
+      const withBand = await POST(
+        buildRequest(buildBlockPayload({ parameters: { sampleCount: 4 } }))
+      )
+
+      const noBand = ForecastResponseSchema.safeParse(await withoutBand.json())
+      const banded = ForecastResponseSchema.safeParse(await withBand.json())
+
+      expect(noBand.success).toBe(true)
+      expect(banded.success).toBe(true)
+      expect(banded.data?.forecast[0].band).toEqual(BAND)
+      expect(banded.data?.parameters.sampleCount).toBe(4)
+    })
+
+    it('strips an unknown key rather than refusing the response', () => {
+      // Not `.strict()`: a newer service's extra field must not break an older app.
+      const parsed = ForecastResponseSchema.safeParse({
+        ...buildForecastResponse({ sampleCount: 4 }),
+        ensemble: { method: 'median' },
+      })
+
+      expect(parsed.success).toBe(true)
+      expect(parsed.data).not.toHaveProperty('ensemble')
+    })
   })
 
   it('assembles a ForecastRequest that satisfies the request schema', async () => {

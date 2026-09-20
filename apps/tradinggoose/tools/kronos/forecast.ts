@@ -26,6 +26,8 @@ export interface KronosForecastResponse extends ToolResponse {
       close: number
       volume: number
       amount: number
+      /** 10th/90th percentile of the sampled closes. Absent at one sample. */
+      band?: { low: number; high: number }
     }>
     model: {
       name: string
@@ -115,7 +117,8 @@ export const kronosForecastTool: ToolConfig<KronosForecastParams, KronosForecast
       type: 'json',
       required: false,
       visibility: 'user-or-llm',
-      description: 'Optional sampling parameters (temperature, topP, sampleCount).',
+      description:
+        'Optional sampling parameters. sampleCount (integer, default 1) runs that many samples: the returned path is their median and every point carries a band of the 10th/90th percentile closes.',
     },
   },
   request: {
@@ -140,7 +143,10 @@ export const kronosForecastTool: ToolConfig<KronosForecastParams, KronosForecast
     }
   },
   outputs: {
-    forecast: { type: 'json', description: 'Forecasted OHLCV points.' },
+    forecast: {
+      type: 'json',
+      description: 'Forecasted OHLCV points, each with an optional ensemble band.',
+    },
     model: { type: 'json', description: 'Model provenance metadata.' },
     input: { type: 'json', description: 'Input metadata for the forecast.' },
     parameters: { type: 'json', description: 'Effective sampling parameters.' },

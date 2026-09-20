@@ -15,6 +15,8 @@ interface KronosForecastResponse extends ToolResponse {
 
 const MAX_HORIZON = 32
 const MIN_HORIZON = 1
+const MAX_SAMPLES = 16
+const MIN_SAMPLES = 1
 
 export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
   type: 'kronos_forecast',
@@ -101,6 +103,20 @@ export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
       required: false,
       placeholder: '0.9',
     },
+    {
+      id: 'sampleCount',
+      title: 'Samples',
+      type: 'short-input',
+      layout: 'half',
+      inputType: 'number',
+      required: false,
+      placeholder: '1',
+      min: MIN_SAMPLES,
+      max: MAX_SAMPLES,
+      integer: true,
+      description:
+        'Defaults to 1. Above 1 the forecast is the median of that many samples, and every point carries a band of the 10th/90th percentile closes.',
+    },
   ],
   tools: {
     access: ['kronos_forecast'],
@@ -130,6 +146,7 @@ export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
           parameters: {
             temperature: params.temperature ? Number(params.temperature) : undefined,
             topP: params.topP ? Number(params.topP) : undefined,
+            sampleCount: params.sampleCount ? Number(params.sampleCount) : undefined,
           },
         }
       },
@@ -147,9 +164,16 @@ export const KronosForecastBlock: BlockConfig<KronosForecastResponse> = {
     horizonBars: { type: 'number', description: 'Number of future bars to forecast.' },
     temperature: { type: 'number', description: 'Optional sampling temperature.' },
     topP: { type: 'number', description: 'Optional nucleus sampling probability.' },
+    sampleCount: {
+      type: 'number',
+      description: 'Optional number of samples to draw; 1 (the default) means no band.',
+    },
   },
   outputs: {
-    forecast: { type: 'json', description: 'Forecasted OHLCV points.' },
+    forecast: {
+      type: 'json',
+      description: 'Forecasted OHLCV points, each with an optional ensemble band.',
+    },
     model: { type: 'json', description: 'Model provenance metadata.' },
     diagnostics: { type: 'json', description: 'Forecast diagnostics and warnings.' },
     timingMs: { type: 'json', description: 'Request timing in milliseconds.' },
