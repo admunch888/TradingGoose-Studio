@@ -36,11 +36,29 @@ class FakeRuntime:
         ]
 
 
-def settings() -> Settings:
+class EnsembleRuntime(FakeRuntime):
+    """A runtime that ran more than one sample: every point carries its band."""
+
+    def __init__(self):
+        self.sample_counts: list[int] = []
+
+    def predict(self, request):
+        self.sample_counts.append(request.parameters.sample_count)
+        points = super().predict(request)
+        for index, point in enumerate(points):
+            point["band"] = {
+                "low": point["close"] - 2.0 - index,
+                "high": point["close"] + 2.0 + index,
+            }
+        return points
+
+
+def settings(**overrides) -> Settings:
     return Settings(
         api_token=TOKEN,
         model_path="/models/kronos-base",
         tokenizer_path="/models/kronos-tokenizer-base",
+        **overrides,
     )
 
 
@@ -59,7 +77,7 @@ def bars(count: int = 32):
     ]
 
 
-def valid_request():
+def valid_request(sample_count: int = 1):
     history = bars()
     last = datetime.fromisoformat(history[-1]["timestamp"])
     return {
@@ -72,7 +90,7 @@ def valid_request():
         "futureTimestamps": [
             (last + timedelta(minutes=5 * i)).isoformat() for i in range(1, 4)
         ],
-        "parameters": {"temperature": 1.0, "topP": 0.9, "sampleCount": 1},
+        "parameters": {"temperature": 1.0, "topP": 0.9, "sampleCount": sample_count},
     }
 
 
@@ -152,3 +170,62 @@ def test_not_ready_service_fails_closed():
 
     assert ready.status_code == 503
     assert forecast.status_code == 503
+
+
+def test_forecast_returns_the_median_path_with_the_sampled_band():
+    runtime = EnsembleRuntime()
+
+    with client(runtime) as test_client:
+        response = test_client.post(
+            "/v1/forecast",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=valid_request(sample_count=4),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert runtime.sample_counts == [4]
+    assert payload["parameters"]["sampleCount"] == 4
+    assert len(payload["forecast"]) == 3
+    for index, point in enumerate(payload["forecast"]):
+        assert point["band"] == {
+            "low": point["close"] - 2.0 - index,
+            "high": point["close"] + 2.0 + index,
+        }
+
+
+def test_forecast_omits_the_band_for_a_single_sample():
+    with client() as test_client:
+        response = test_client.post(
+            "/v1/forecast",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=valid_request(sample_count=1),
+        )
+
+    assert response.status_code == 200
+    assert all("band" not in point for point in response.json()["forecast"])
+
+
+def test_forecast_refuses_a_sample_count_above_the_configured_cap():
+    runtime = EnsembleRuntime()
+    app = create_app(settings=settings(max_samples=4), runtime=runtime)
+
+    with TestClient(app) as test_client:
+        at_cap = test_client.post(
+            "/v1/forecast",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=valid_request(sample_count=4),
+        )
+        above_cap = test_client.post(
+            "/v1/forecast",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=valid_request(sample_count=5),
+        )
+
+    assert at_cap.status_code == 200
+    assert above_cap.status_code == 422
+    assert above_cap.json()["detail"] == (
+        "sampleCount must be at most 4 (KRONOS_MAX_SAMPLES), got 5"
+    )
+    # Rejected, not clamped: the model is never asked to run the cheaper forecast.
+    assert runtime.sample_counts == [4]

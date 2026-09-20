@@ -386,7 +386,11 @@ def sample_from_logits(logits, temperature=1.0, top_k=None, top_p=None, sample_l
     return x
 
 
-def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context, pred_len, clip=5, T=1.0, top_k=0, top_p=0.99, sample_count=5, verbose=False):
+# LOCAL DIVERGENCE from upstream revision 67b630e (third_party/kronos/UPSTREAM_REVISION):
+# `return_samples` was added so a caller can keep the per-sample paths that the sample axis
+# already holds. The tail of this function is the only other edit; the default path is
+# upstream's, unchanged, so every existing caller behaves exactly as before.
+def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context, pred_len, clip=5, T=1.0, top_k=0, top_p=0.99, sample_count=5, verbose=False, return_samples=False):
     with torch.no_grad():
         x = torch.clip(x, -clip, clip)
 
@@ -464,6 +468,16 @@ def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context
         z = tokenizer.decode(input_tokens, half=True)
         z = z.reshape(-1, sample_count, z.size(1), z.size(2))
         preds = z.cpu().numpy()
+
+        # LOCAL DIVERGENCE from upstream revision 67b630e (third_party/kronos/UPSTREAM_REVISION).
+        # Upstream collapses the sample axis on the next line, so no caller ever sees more than
+        # one path and no caller can report how much the sampled paths disagreed. TradingGoose
+        # needs that spread to carry an uncertainty band, so with return_samples the per-sample
+        # array (batch, sample_count, seq_len, features) is handed back untouched.
+        # Unflagged, this is upstream's mean-over-axis-1 exactly as before.
+        if return_samples:
+            return preds
+
         preds = np.mean(preds, axis=1)
 
         return preds
@@ -505,18 +519,30 @@ class KronosPredictor:
         self.tokenizer = self.tokenizer.to(self.device)
         self.model = self.model.to(self.device)
 
-    def generate(self, x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose):
+    # LOCAL DIVERGENCE from upstream revision 67b630e (third_party/kronos/UPSTREAM_REVISION):
+    # `return_samples` is threaded through to auto_regressive_inference. predict_batch and every
+    # other caller leave it unset and get the averaged path they have always had.
+    def generate(self, x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose, return_samples=False):
 
         x_tensor = torch.from_numpy(np.array(x).astype(np.float32)).to(self.device)
         x_stamp_tensor = torch.from_numpy(np.array(x_stamp).astype(np.float32)).to(self.device)
         y_stamp_tensor = torch.from_numpy(np.array(y_stamp).astype(np.float32)).to(self.device)
 
         preds = auto_regressive_inference(self.tokenizer, self.model, x_tensor, x_stamp_tensor, y_stamp_tensor, self.max_context, pred_len,
-                                          self.clip, T, top_k, top_p, sample_count, verbose)
+                                          self.clip, T, top_k, top_p, sample_count, verbose, return_samples)
+        # LOCAL DIVERGENCE from upstream revision 67b630e (third_party/kronos/UPSTREAM_REVISION):
+        # with return_samples the array is (batch, sample_count, seq_len, features), so the horizon
+        # sits one axis further in than the (batch, seq_len, features) slice below assumes.
+        if return_samples:
+            return preds[:, :, -pred_len:, :]
         preds = preds[:, -pred_len:, :]
         return preds
 
-    def predict(self, df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True):
+    # LOCAL DIVERGENCE from upstream revision 67b630e (third_party/kronos/UPSTREAM_REVISION):
+    # `return_samples` switches the return value from the averaged DataFrame to the
+    # (sample_count, pred_len, features) per-sample array, in price space. See the end of the
+    # method; the default is upstream's behaviour, unchanged.
+    def predict(self, df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True, return_samples=False):
 
         if not isinstance(df, pd.DataFrame):
             raise ValueError("Input must be a pandas DataFrame.")
@@ -550,10 +576,19 @@ class KronosPredictor:
         x_stamp = x_stamp[np.newaxis, :]
         y_stamp = y_stamp[np.newaxis, :]
 
-        preds = self.generate(x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose)
+        preds = self.generate(x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose, return_samples)
 
+        # De-normalisation is shared by both modes - it broadcasts over the last axis, which is
+        # the feature axis either way - so the two paths cannot drift apart.
         preds = preds.squeeze(0)
         preds = preds * (x_std + 1e-5) + x_mean
+
+        # LOCAL DIVERGENCE from upstream revision 67b630e (third_party/kronos/UPSTREAM_REVISION):
+        # upstream always builds the averaged DataFrame below. With return_samples the caller gets
+        # every sampled path as (sample_count, pred_len, features) in price space and reduces it
+        # itself, which is what the flag is for - hence no timestamp index on this arm.
+        if return_samples:
+            return preds
 
         pred_df = pd.DataFrame(preds, columns=self.price_cols + [self.vol_col, self.amt_vol], index=y_timestamp)
         return pred_df

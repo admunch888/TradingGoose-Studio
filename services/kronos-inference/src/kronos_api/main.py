@@ -101,10 +101,29 @@ def create_app(settings: Settings | None = None, runtime: Any | None = None) -> 
             raise HTTPException(status_code=503, detail="Kronos model is not ready")
         return {"status": "ready", "model": model_runtime.metadata}
 
-    @app.post("/v1/forecast", response_model=ForecastResponse)
+    # exclude_none keeps an absent ensemble band out of the payload entirely: `"band": null`
+    # would read as a band that was computed and came out flat. `band` is the only optional
+    # field in the response tree, so this widens nothing else.
+    @app.post(
+        "/v1/forecast",
+        response_model=ForecastResponse,
+        response_model_exclude_none=True,
+    )
     async def forecast(request: ForecastRequest, _authorized: None = Depends(authorize)):
         if not model_runtime.ready:
             raise HTTPException(status_code=503, detail="Kronos model is not ready")
+
+        # Enforced here rather than in the schema because the cap is a setting: rejecting beats
+        # clamping, since the sample count is what the caller is paying for (the samples run
+        # through the batch dimension) and a silently cheaper forecast is a different answer.
+        if request.parameters.sample_count > configured.max_samples:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"sampleCount must be at most {configured.max_samples} "
+                    f"(KRONOS_MAX_SAMPLES), got {request.parameters.sample_count}"
+                ),
+            )
 
         total_started = perf_counter()
         try:
@@ -118,6 +137,9 @@ def create_app(settings: Settings | None = None, runtime: Any | None = None) -> 
             raise HTTPException(status_code=502, detail="Kronos inference failed") from error
 
         try:
+            # Reconciles whichever series the runtime returned: a single path, or the median
+            # path of an ensemble. A band rides along inside the raw point untouched - it is
+            # percentiles of the sampled closes, not a candle to be widened.
             points, reconciliation_count = reconcile_points(raw_points)
         except (ValueError, TypeError) as error:
             raise HTTPException(status_code=502, detail="Kronos returned invalid forecast data") from error

@@ -15,5 +15,6 @@ class Settings(BaseSettings):
     device: str = "cpu"
     max_context: int = Field(default=512, ge=32, le=2048)
     max_queue: int = Field(default=8, ge=0, le=64)
+    max_samples: int = Field(default=16, ge=1, le=64)
     inference_concurrency: int = Field(default=1, ge=1, le=4)
     warmup: bool = True
