@@ -398,6 +398,118 @@ export const isIbkrContractMonthInThePast = (month: string, now: Date): boolean 
   )
 }
 
+/** A day in milliseconds, the unit both roll windows below are measured in. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+/**
+ * A New York wall-clock time on a calendar day, as the instant it names.
+ *
+ * 09:30 ET is 13:30Z under daylight saving and 14:30Z without it, and the CME
+ * quarterlies - March, June, September, December - fall on both sides of that
+ * switch within one year, so neither offset can be assumed. The zone's own
+ * offset is read out of `Intl`, the only DST table available without a
+ * dependency.
+ */
+const newYorkTime = (
+  year: number,
+  monthIndex: number,
+  day: number,
+  hour: number,
+  minute: number
+): Date => {
+  const guess = new Date(Date.UTC(year, monthIndex, day, hour, minute))
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(guess)
+  const read = (type: 'year' | 'month' | 'day' | 'hour' | 'minute'): number =>
+    Number(parts.find((part) => part.type === type)?.value ?? 0)
+  // New York is UTC plus this offset, so the instant asked for is the wall-clock
+  // time minus it. Reading the offset AT the guess is enough: it is the offset
+  // at the answer too, 09:30 being nowhere near the 02:00 the zone switches at.
+  const offsetMs =
+    Date.UTC(read('year'), read('month') - 1, read('day'), read('hour') % 24, read('minute')) -
+    guess.getTime()
+  return new Date(guess.getTime() - offsetMs)
+}
+
+/**
+ * When a contract month stops trading: the third Friday of that month at 09:30
+ * New York time.
+ *
+ * That is the CME EQUITY-INDEX rule - ES, MES, MNQ and their siblings, whose
+ * last trading day is the Friday morning the settlement print is taken on - and
+ * it is the only rule this reads. Products that expire on another day (crude,
+ * grains, treasuries) are NOT covered yet: selecting one of their front months
+ * by this date would roll them on a day that is not their expiry, which is worse
+ * than not rolling them at all.
+ *
+ * Pure date arithmetic - the 1st's weekday, the first Friday from it, the third
+ * Friday from there - so no calendar dependency enters the tree. A token that is
+ * not a contract month has no expiry: null, never a guess.
+ */
+export const futuresContractMonthExpiry = (month: string, now: Date): Date | null => {
+  const parsed = parseIbkrContractMonth(month)
+  if (!parsed) {
+    return null
+  }
+  const year = nearestContractYear(parsed.year, now)
+  // Sunday is 0 and Friday 5, so the 1st is its own first Friday when it is one
+  // (`MAY26`), otherwise the days to the next; 14 past that is the third.
+  const firstWeekday = new Date(Date.UTC(year, parsed.monthIndex, 1)).getUTCDay()
+  const thirdFriday = 1 + ((5 - firstWeekday + 7) % 7) + 14
+  return newYorkTime(year, parsed.monthIndex, thirdFriday, 9, 30)
+}
+
+/**
+ * Whether a contract month is near enough to its expiry that the next one has
+ * to be traded in its place.
+ *
+ * Measured to the expiry itself, so a month exactly `rollDaysBefore` away is NOT
+ * yet expiring and only a nearer one is: the whole window is kept deliberately,
+ * because rolling earlier gives up the front month's last - and most liquid -
+ * week. A month already past its expiry is inside every window, and a token that
+ * is not a contract month is not expiring either: nothing is rolled on a token
+ * that cannot say when.
+ */
+export const isIbkrContractMonthExpiringSoon = (
+  month: string,
+  now: Date,
+  rollDaysBefore = 7
+): boolean => {
+  const expiry = futuresContractMonthExpiry(month, now)
+  return expiry !== null && expiry.getTime() - now.getTime() < rollDaysBefore * MS_PER_DAY
+}
+
+/**
+ * The contract month a bare futures root trades: the first of `months`, by
+ * expiry, whose expiry is at least `rollDaysBefore` away.
+ *
+ * IBKR's order is not the answer - the live MES section lists
+ * `SEP26;DEC26;MAR27;JUN27;SEP27`, where a month IBKR still lists can already be
+ * inside its roll window - so the months are ordered by the third-Friday expiry
+ * above and the first live one wins. Tokens that are not contract months are not
+ * candidates, and a list with nothing clear of the window (all of it expired)
+ * answers null - no month - rather than the nearest wrong one.
+ */
+export const selectIbkrFrontMonth = (
+  months: readonly string[],
+  now: Date,
+  rollDaysBefore = 7
+): string | null => {
+  const horizon = now.getTime() + rollDaysBefore * MS_PER_DAY
+  const candidates = months
+    .map((month) => ({ month, expiry: futuresContractMonthExpiry(month, now) }))
+    .filter((candidate): candidate is { month: string; expiry: Date } => candidate.expiry !== null)
+    .sort((a, b) => a.expiry.getTime() - b.expiry.getTime())
+  return candidates.find((candidate) => candidate.expiry.getTime() >= horizon)?.month ?? null
+}
+
 /**
  * The contract months IBKR lists for a sec type across a search response, in
  * the order IBKR sent them and with no duplicates.
@@ -606,6 +718,20 @@ const fetchIbkrContractMonthConid = async ({
 }
 
 /**
+ * The front month a bare root's cache entry was resolved to, by cache key.
+ *
+ * The conid cache NEVER expires: `FUT:MES:CME:USD:-` holds whatever conid it was
+ * first given for the life of the process, so a process that started before an
+ * expiry would go on trading the contract that has since stopped, with a restart
+ * as the only cure. Which month that conid belongs to is not derivable from the
+ * key - a bare root's key names none - so it is recorded here instead, and the
+ * cache read below can tell a live front month from a rolled one. Only bare-root
+ * lookups write to this: a key that names a month is already pinned to it by its
+ * own key.
+ */
+const frontMonthByCacheKey = new Map<string, string>()
+
+/**
  * Resolve an IBKR contract identifier for a symbol and seed the in-memory
  * conid cache. Call this ahead of order submission — the shared order pipeline
  * is synchronous and reads conid values from the cache (see resolveIbkrConid).
@@ -641,7 +767,17 @@ export async function resolveIbkrConidFromApi({
   const cacheKey = buildIbkrConidCacheKey(normalizedSymbol, assetClass, context)
   const cachedConid = getCachedIbkrConid(cacheKey)
   if (cachedConid !== undefined) {
-    return { conid: cachedConid, conidSpec }
+    /**
+     * A bare root's entry held the front month of the day it was resolved, and
+     * this cache never expires, so a month that has come inside its roll window
+     * makes the entry a contract on its way out: fall through and resolve the
+     * new front month instead of returning it. Every other key is pinned to a
+     * month by the key itself and is returned as before.
+     */
+    const cachedFrontMonth = frontMonthByCacheKey.get(cacheKey)
+    if (!cachedFrontMonth || !isIbkrContractMonthExpiringSoon(cachedFrontMonth, now)) {
+      return { conid: cachedConid, conidSpec }
+    }
   }
 
   // The local Client Portal Gateway carries auth in its browser session, so no
@@ -802,10 +938,47 @@ export async function resolveIbkrConidFromApi({
       continue
     }
 
-    // No contract month requested: the underlying's own conid is the answer,
-    // exactly as before - no extra hop.
+    // No contract month requested. The row's conid here is the UNDERLYING - the
+    // root, which is no contract month - so a futures root answers with the
+    // front month the section lists (the case the listing catalogue used to have
+    // to cover by naming a month itself). A section that enumerates no months
+    // (every non-futures one, and older payload shapes) keeps the old answer.
     if (!requestedContractMonth) {
-      resolvedConid = underlyingConid
+      const frontMonth =
+        conidSpec === 'FUT' ? selectIbkrFrontMonth(sectionMonths(chosen?.section ?? {}), now) : null
+      if (!frontMonth) {
+        logger.warn(
+          'IBKR futures section lists no contract month clear of its roll window; using the underlying conid',
+          { symbol: candidate, conidSpec, conid: underlyingConid }
+        )
+        resolvedConid = underlyingConid
+        break
+      }
+      const frontConid = await fetchIbkrContractMonthConid({
+        underlyingConid,
+        secType: conidSpec,
+        month: frontMonth,
+        // The section's venue when it names one, else the documented SMART
+        // default - the same handling the requested-month path below uses.
+        exchange: normalizeListingToken(chosen?.section?.exchange) || 'SMART',
+        rootSymbol: chosen?.row?.symbol || candidate,
+        accessToken,
+      })
+      if (frontConid === undefined) {
+        logger.warn('IBKR named no contract for the front month of a futures root', {
+          symbol: candidate,
+          month: frontMonth,
+        })
+        resolvedConid = underlyingConid
+        break
+      }
+      frontMonthByCacheKey.set(cacheKey, frontMonth)
+      // Deliberately the BARE key, not one carrying the month: the synchronous
+      // order path knows only the root its listing named and has no month to
+      // build a key with (see resolveIbkrConid), so the front month has to be
+      // cached where that read looks.
+      cacheIbkrConid(cacheKey, frontConid)
+      resolvedConid = frontConid
       break
     }
 
