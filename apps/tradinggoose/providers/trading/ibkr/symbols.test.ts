@@ -2,11 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cacheIbkrConid, clearIbkrConidCache } from '@/providers/trading/ibkr/client'
 import {
   buildIbkrConidCacheKey,
+  futuresContractMonthExpiry,
   ibkrSymbolCandidates,
+  isIbkrContractMonthExpiringSoon,
   parseIbkrFuturesContractMonth,
   resolveIbkrConid,
   resolveIbkrConidFromApi,
   resolveIbkrConidSpec,
+  selectIbkrFrontMonth,
 } from '@/providers/trading/ibkr/symbols'
 import { fetchBrokerJson } from '@/providers/trading/portfolio-utils'
 
@@ -362,6 +365,96 @@ describe('parseIbkrFuturesContractMonth', () => {
     expect(parseIbkrFuturesContractMonth('MESZ25', 'stock', now)).toBeNull()
     expect(parseIbkrFuturesContractMonth('MESZ25', undefined, now)).toBeNull()
     expect(parseIbkrFuturesContractMonth('MESZ25', 'etf', now)).toBeNull()
+  })
+})
+
+describe('futuresContractMonthExpiry', () => {
+  const now = new Date('2026-09-15T00:00:00Z')
+
+  it('is the third Friday of the contract month, at 09:30 New York time', () => {
+    // December 2026: the third Friday is the 18th, the day the real
+    // secdef/info answer names in `desc1: "Dec18'26(5)"` - the rule this reads
+    // was taken off that payload. The month starts on a Tuesday, so its Fridays
+    // are the 4th, 11th and 18th, and 09:30 EST is 14:30Z.
+    expect(futuresContractMonthExpiry('DEC26', now)?.toISOString()).toBe('2026-12-18T14:30:00.000Z')
+    // March 2026 puts the third Friday on the 20th of a 31-day month, after the
+    // 8th's DST switch, so the same 09:30 is 13:30Z - and MAY26, whose 1st is
+    // itself a Friday, has its third on the 15th rather than the 22nd.
+    expect(futuresContractMonthExpiry('MAR26', now)?.toISOString()).toBe('2026-03-20T13:30:00.000Z')
+    expect(futuresContractMonthExpiry('MAY26', now)?.toISOString()).toBe('2026-05-15T13:30:00.000Z')
+  })
+
+  it('reads the year in the century nearest the clock, and only for a contract month', () => {
+    expect(futuresContractMonthExpiry('DEC25', now)?.toISOString()).toBe('2025-12-19T14:30:00.000Z')
+    expect(futuresContractMonthExpiry('DECEMBER26', now)).toBeNull()
+    expect(futuresContractMonthExpiry('26DEC', now)).toBeNull()
+  })
+})
+
+describe('isIbkrContractMonthExpiringSoon', () => {
+  // December 2026's expiry, from the test above: the window is measured to this
+  // instant, not to the month.
+  const expiry = new Date('2026-12-18T14:30:00.000Z')
+
+  it('is false clear of the window, true inside it, and true once expired', () => {
+    expect(isIbkrContractMonthExpiringSoon('DEC26', new Date('2026-11-01T00:00:00Z'))).toBe(false)
+    expect(isIbkrContractMonthExpiringSoon('DEC26', new Date('2026-12-12T00:00:00Z'))).toBe(true)
+    // A month that has stopped trading is inside every window, which is what
+    // makes a cached front month re-resolve rather than serve a dead contract.
+    expect(isIbkrContractMonthExpiringSoon('DEC26', expiry)).toBe(true)
+  })
+
+  it('keeps the whole window: exactly rollDaysBefore days out is not yet expiring', () => {
+    const sevenDaysBefore = new Date(expiry.getTime() - 7 * 24 * 60 * 60 * 1000)
+    expect(isIbkrContractMonthExpiringSoon('DEC26', sevenDaysBefore)).toBe(false)
+    expect(isIbkrContractMonthExpiringSoon('DEC26', new Date(sevenDaysBefore.getTime() + 1))).toBe(
+      true
+    )
+  })
+
+  it('is false for a token that is not a contract month', () => {
+    expect(isIbkrContractMonthExpiringSoon('MES', expiry)).toBe(false)
+    expect(isIbkrContractMonthExpiringSoon('', expiry)).toBe(false)
+  })
+})
+
+describe('selectIbkrFrontMonth', () => {
+  // The months the REAL gateway listed for `MES`, in IBKR's order.
+  const liveMonths = ['SEP26', 'DEC26', 'MAR27', 'JUN27', 'SEP27']
+
+  it('takes the nearest month whose expiry is clear of the roll window', () => {
+    // 2026-09-15 is three days from the SEP26 expiry, so SEP26 is inside the
+    // window and DEC26 - the second month IBKR lists - is the front month.
+    expect(selectIbkrFrontMonth(liveMonths, new Date('2026-09-15T00:00:00Z'))).toBe('DEC26')
+    // Seventeen days before that expiry, SEP26 is still the front month.
+    expect(selectIbkrFrontMonth(liveMonths, new Date('2026-09-01T00:00:00Z'))).toBe('SEP26')
+  })
+
+  it('orders by expiry rather than by the order IBKR listed the months in', () => {
+    expect(selectIbkrFrontMonth(['DEC26', 'SEP26'], new Date('2026-09-01T00:00:00Z'))).toBe('SEP26')
+  })
+
+  it('moves to the next month only once the front one is inside the window', () => {
+    const months = ['DEC26', 'MAR27']
+    const sevenDaysBefore = new Date('2026-12-11T14:30:00.000Z')
+    const sixDaysBefore = new Date('2026-12-12T14:30:00.000Z')
+
+    expect(selectIbkrFrontMonth(months, sevenDaysBefore)).toBe('DEC26')
+    expect(selectIbkrFrontMonth(months, sixDaysBefore)).toBe('MAR27')
+  })
+
+  it('skips months that have expired and tokens that are not months', () => {
+    const now = new Date('2026-09-15T00:00:00Z')
+    expect(selectIbkrFrontMonth(['MAR26', 'DEC26'], now)).toBe('DEC26')
+    expect(selectIbkrFrontMonth(['NOTAMONTH', 'DEC26'], now)).toBe('DEC26')
+  })
+
+  it('answers null when no listed month is tradeable', () => {
+    expect(selectIbkrFrontMonth([], new Date('2026-09-15T00:00:00Z'))).toBeNull()
+    // Every month past its expiry: no front month, rather than the nearest
+    // wrong one.
+    expect(selectIbkrFrontMonth(['DEC25'], new Date('2026-09-15T00:00:00Z'))).toBeNull()
+    expect(selectIbkrFrontMonth(['NOTAMONTH'], new Date('2026-09-15T00:00:00Z'))).toBeNull()
   })
 })
 
@@ -747,7 +840,7 @@ describe('resolveIbkrConidFromApi', () => {
     expect(infoUrl).toContain('exchange=CME')
   })
 
-  it('keeps the root symbol resolvable for callers that pass only the root', async () => {
+  it('keeps the underlying conid when no listed month is clear of its roll window', async () => {
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
     mockSecDefByMonth(mesContractMonthRows, { DEC25: mesDec25InfoRows })
 
@@ -755,13 +848,90 @@ describe('resolveIbkrConidFromApi', () => {
       symbol: 'MES',
       assetClass: 'future',
       context: { marketCode: 'XCME', currency: 'USD' },
+      // The row the section filter picks lists SEP26 alone, and this clock is
+      // three days from that expiry: nothing the section offers is tradeable as
+      // a front month, so the old answer stands and the hop does not run.
+      now: new Date('2026-09-15T00:00:00Z'),
     })
 
-    // No contract month requested, so no expiry filter and NO extra hop: the
-    // first row offering a FUT section, exactly as before.
     expect(resolution).toEqual({ conid: 466221142, conidSpec: 'FUT' })
     expect(secDefInfoUrls()).toEqual([])
     expect(fetchBrokerJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves a bare futures root to its front month, not to the underlying conid', async () => {
+    // The same root against the REAL gateway payload, whose FUT section lists
+    // SEP26;DEC26;MAR27;JUN27;SEP27. Three days before the SEP26 expiry, the
+    // front month is DEC26 - a contract the search cannot answer with, because
+    // the row's conid (362673777) is the UNDERLYING. `/iserver/secdef/info` is
+    // what returns DEC26's own conid, 815824257.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesLiveSearchRows, { DEC26: mesLiveDec26InfoRows })
+    const context = { marketCode: 'XCME', currency: 'USD' }
+
+    const resolution = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context,
+      now: new Date('2026-09-15T00:00:00Z'),
+    })
+
+    expect(resolution).toEqual({ conid: 815824257, conidSpec: 'FUT' })
+    const [infoUrl] = secDefInfoUrls()
+    expect(infoUrl).toContain('conid=362673777')
+    expect(infoUrl).toContain('sectype=FUT')
+    expect(infoUrl).toContain('month=DEC26')
+    expect(infoUrl).toContain('exchange=CME')
+    // Under the BARE key, which is the only one the synchronous order path can
+    // build from a root: it has no month to key by (see resolveIbkrConid).
+    expect(buildIbkrConidCacheKey('MES', 'future', context)).toBe('FUT:MES:XCME:USD:-')
+    expect(resolveIbkrConid({ symbol: 'MES', assetClass: 'future', context })).toEqual({
+      conid: 815824257,
+      conidSpec: 'FUT',
+    })
+  })
+
+  it('re-resolves the next front month when the cached one is inside its roll window', async () => {
+    // The conid cache never expires, so the bare entry would otherwise keep
+    // pointing at DEC26 for the life of the process. Four days before the DEC26
+    // expiry the entry is a contract on its way out and the root is resolved
+    // again - to MAR27, the next month clear of the window.
+    vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
+    mockSecDefByMonth(mesLiveSearchRows, {
+      DEC26: mesLiveDec26InfoRows,
+      MAR27: [{ conid: '818181818', symbol: 'MES', secType: 'FUT', exchange: 'CME' }],
+    })
+    const context = { marketCode: 'XCME', currency: 'USD' }
+
+    const december = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context,
+      now: new Date('2026-09-15T00:00:00Z'),
+    })
+    const march = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context,
+      now: new Date('2026-12-14T00:00:00Z'),
+    })
+
+    expect(december.conid).toBe(815824257)
+    expect(march).toEqual({ conid: 818181818, conidSpec: 'FUT' })
+    expect(secDefInfoUrls().map((url) => /month=([A-Z]{3}\d{2})/.exec(url)?.[1])).toEqual([
+      'DEC26',
+      'MAR27',
+    ])
+
+    // And the new month is what the entry now holds, still under the bare key.
+    const again = await resolveIbkrConidFromApi({
+      symbol: 'MES',
+      assetClass: 'future',
+      context,
+      now: new Date('2026-12-14T00:00:00Z'),
+    })
+    expect(again.conid).toBe(818181818)
+    expect(secDefInfoUrls()).toHaveLength(2)
   })
 
   it('fails on a contract month the listing does not offer instead of taking the first section', async () => {
@@ -872,12 +1042,14 @@ describe('resolveIbkrConidFromApi', () => {
     expect(infoUrl).toContain('exchange=CME')
   })
 
-  it('leaves a root-only lookup untouched: no month, no list, no hop', async () => {
-    // The row's own conid IS the answer when no contract month was requested,
-    // exactly as before - and there is nothing for the new message to describe,
-    // because nothing was asked of it.
+  it('leaves a root-only lookup untouched when the section lists no month', async () => {
+    // A section that enumerates no months - older payload shapes, and every
+    // non-futures sec type - has nothing to select a front month from, so the
+    // row's own conid stays the answer and no hop runs, exactly as before.
     vi.stubEnv('IBKR_API_BASE_URL', 'http://host.containers.internal:5002/v1/api')
-    mockSecDefByMonth(mesLiveSearchRows, { DEC26: mesLiveDec26InfoRows })
+    vi.mocked(fetchBrokerJson).mockResolvedValue([
+      { conid: '362673777', symbol: 'MES', description: 'CME', sections: [{ secType: 'FUT' }] },
+    ] as never)
 
     const resolution = await resolveIbkrConidFromApi({
       symbol: 'MES',
@@ -1015,6 +1187,10 @@ describe('resolveIbkrConidFromApi', () => {
       symbol: 'MES',
       assetClass: 'future',
       context,
+      // The section the root resolves through lists SEP26 alone, which is inside
+      // its roll window at this clock, so no front month is picked and the
+      // entry is the row's own conid.
+      now: new Date('2026-09-15T00:00:00Z'),
     })
 
     expect(rootOnly).toEqual({ conid: 466221142, conidSpec: 'FUT' })
