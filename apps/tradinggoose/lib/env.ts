@@ -100,6 +100,9 @@ function safeCreateEnv() {
     TRIGGER_PROJECT_ID: z.string().optional(),                  // Trigger.dev project ID
     TRIGGER_SECRET_KEY: z.string().min(1).optional(),           // Trigger.dev secret key for background jobs
     CRON_SECRET: z.string().optional(),                  // Secret for authenticating cron job requests
+    WORKFLOW_LOG_SWEEPER_ENABLED: z.boolean().optional().default(true),      // Close stuck workflow execution logs from instrumentation (default true)
+    WORKFLOW_LOG_SWEEPER_INTERVAL_MS: z.number().int().positive().optional(),  // Stuck log sweep interval in ms (default 300000)
+    WORKFLOW_LOG_SWEEPER_GRACE_MS: z.number().int().positive().optional(),     // Only sweep logs older than this in ms (default 3600000)
 
     // Kronos forecasting service
     KRONOS_ENABLED: z.boolean().optional().default(false),           // Enable the Kronos forecast block

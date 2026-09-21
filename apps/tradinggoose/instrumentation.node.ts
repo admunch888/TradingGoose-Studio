@@ -1,6 +1,7 @@
 import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api'
 import { env } from './lib/env'
 import { createLogger } from './lib/logs/console/logger'
+import { startStuckExecutionSweeperLoop } from './lib/logs/execution/stuck-execution-sweeper-loop'
 
 const logger = createLogger('OTelInstrumentation')
 
@@ -25,6 +26,12 @@ const telemetryState = globalThis as typeof globalThis & {
 }
 
 export async function register() {
+  try {
+    startStuckExecutionSweeperLoop()
+  } catch (error) {
+    logger.error('Failed to start stuck execution sweeper', error)
+  }
+
   if (env.NEXT_TELEMETRY_DISABLED === '1') {
     logger.info('OpenTelemetry disabled via NEXT_TELEMETRY_DISABLED=1')
     return
