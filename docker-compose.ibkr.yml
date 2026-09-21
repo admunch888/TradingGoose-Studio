@@ -109,8 +109,8 @@ services:
 
   kronos-inference:
     build:
-      context: .
-      dockerfile: services/kronos-inference/Dockerfile
+      context: ./services/kronos-inference
+      dockerfile: Dockerfile
     restart: always
     expose:
       - '8000'
