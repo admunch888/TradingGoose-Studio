@@ -90,8 +90,11 @@ services:
       IBKR_API_BASE_URL: ${IBKR_API_BASE_URL:?IBKR_API_BASE_URL is required}
       IBKR_API_IP: ${IBKR_API_IP:?IBKR_API_IP is required}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?INTERNAL_API_SECRET is required}
-      # Trust the local CA that signs the Obsidian MCP server's TLS cert (https://100.64.0.8:8443)
-      NODE_EXTRA_CA_CERTS: /opt/certs/obsidian-ca.crt
+      # Trust the local CAs that sign this host's TLS leaves:
+      #  - Obsidian MCP server (https://100.64.0.8:8443)
+      #  - the app's own leaf on https://100.64.0.8:3000 (TradingGoose Local CA),
+      #    needed for internal self-HTTP calls (function blocks, tool dispatch)
+      NODE_EXTRA_CA_CERTS: /opt/certs/obsidian-ca.crt,/opt/certs/tradinggoose-ca.crt
 
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       BETTER_AUTH_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
@@ -101,6 +104,7 @@ services:
       KRONOS_INTERNAL_TOKEN: ${KRONOS_API_TOKEN:?Set KRONOS_API_TOKEN in .env}
     volumes:
       - ./certs/obsidian-ca.crt:/opt/certs/obsidian-ca.crt:ro
+      - ./certs/tradinggoose-ca.crt:/opt/certs/tradinggoose-ca.crt:ro
     depends_on:
       db:
         condition: service_healthy
