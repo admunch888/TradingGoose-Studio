@@ -64,7 +64,11 @@ export interface ForecastScoreSummary {
   byRegime: Record<string, DirectionalSummary>
 }
 
-const directionOf = (from: number, to: number): Direction => {
+/**
+ * The one place a direction is decided. Exported so the live signal path
+ * (`signal.ts`) reads a forecast exactly the way the backtest scores it.
+ */
+export const directionOf = (from: number, to: number): Direction => {
   if (to > from) return 'up'
   if (to < from) return 'down'
   return 'flat'
