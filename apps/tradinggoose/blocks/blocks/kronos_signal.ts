@@ -12,7 +12,7 @@ export const KronosSignalBlock: BlockConfig<KronosSignalResponse> = {
   name: 'Kronos Signal',
   description: 'Turn a Kronos forecast into a long/short/flat signal with its reason.',
   longDescription:
-    'Apply the signal policy to a Kronos forecast: realized-volatility, predicted-drawdown and minimum-return gates, then an ensemble agreement gate, and report the resulting long/short/flat decision with the reason for it. The direction it reports comes from the same rule the backtest scores with, and stays separate from the action, which is what the gates allow. A forecast that ran a single sample carries no ensemble, so the agreement gate is not applied and the signal stands aside saying so. This block reads data and decides; it does not place orders or access broker credentials.',
+    'Apply the signal policy to a Kronos forecast: realized-volatility, predicted-drawdown and minimum-return gates, then an ensemble agreement gate, and report the resulting long/short/flat decision with the reason for it. The direction it reports comes from the same rule the backtest scores with, and stays separate from the action, which is what the gates allow. A forecast that ran a single sample carries no ensemble, so the agreement gate is not applied and the signal stands aside saying so. The VIX complex decides the rest: the regime sets the agreement floor (0.6 calm and normal, 0.75 elevated), a stressed reading blocks new entries outright, a terminal move outside the sane multiples of the implied move stands aside, and the stop and target are sized from that implied move. With no VIX quote - none supplied, or one older than the freshness allowance - the signal stands aside naming what was missing rather than trading a regime it cannot know; the route fetches VIX and VIX3M itself until a dedicated VIX-context step exists. This block reads data and decides; it does not place orders or access broker credentials.',
   category: 'tools',
   bgColor: '#0d9488',
   icon: SignalIcon,
@@ -49,7 +49,7 @@ export const KronosSignalBlock: BlockConfig<KronosSignalResponse> = {
       placeholder:
         '{"minTerminalReturnTicks": 20, "maxPredictedDrawdownTicks": 40, "minAgreement": 0.6}',
       description:
-        'Optional thresholds. Leave empty for the defaults (minTerminalReturn 0.5%, maxPredictedDrawdown 2%, maxRealizedVolatility 0.6, minAgreement 0.6). Move thresholds are quoted in MES ticks of 0.25 index points; minTerminalReturnTicks is the smallest terminal move worth trading and maxPredictedDrawdownTicks the largest excursion worth risking. currentPositionSide can be set when the workflow knows the account side.',
+        'Optional thresholds. Leave empty for the defaults (minTerminalReturn 0.5%, maxPredictedDrawdown 2%, maxRealizedVolatility 0.6, minAgreement from the VIX regime: 0.6 calm and normal, 0.75 elevated). Move thresholds are quoted in MES ticks of 0.25 index points; minTerminalReturnTicks is the smallest terminal move worth trading and maxPredictedDrawdownTicks the largest excursion worth risking. currentPositionSide can be set when the workflow knows the account side. A minAgreement given here overrides the regime floor.',
     },
   ],
   tools: {
@@ -125,7 +125,56 @@ export const KronosSignalBlock: BlockConfig<KronosSignalResponse> = {
       description:
         'Share of the ensemble that agrees with the predicted direction. Null when the forecast carried no ensemble, in which case the gate is not applied and the signal stands aside.',
     },
-    minAgreement: { type: 'number', description: 'Effective minimum agreement for this signal.' },
+    minAgreement: {
+      type: 'number',
+      description:
+        "Effective minimum agreement: the VIX regime's floor, or the caller's own if the config gave one.",
+    },
+    regime: {
+      type: 'string',
+      description:
+        'The VIX regime the signal was judged under: calm, normal, elevated, stressed, or unknown when no usable VIX quote was available - which always stands the signal aside.',
+    },
+    vix: {
+      type: 'number',
+      description:
+        'VIX last print. Null when no readable quote was available; check vixStale before treating it as live.',
+    },
+    vix3m: {
+      type: 'number',
+      description: 'VIX3M last print, only ever from a fresh quote. Null when absent or stale.',
+    },
+    vixStale: {
+      type: 'boolean',
+      description:
+        'Whether the VIX quote was missing or older than the freshness allowance. A stale quote stands the signal aside.',
+    },
+    impliedMoveFraction: {
+      type: 'number',
+      description:
+        'One-sigma move the VIX implies over the configured horizon, as a fraction of price. Null with no usable VIX.',
+    },
+    impliedMovePoints: {
+      type: 'number',
+      description: 'The same implied move in index points at lastClose.',
+    },
+    stopPoints: {
+      type: 'number',
+      description:
+        "Stop distance in index points: the regime's multiple of the implied move. Null when the regime blocks entries.",
+    },
+    targetPoints: {
+      type: 'number',
+      description: 'Target distance in index points, from the same implied move.',
+    },
+    stopTicks: {
+      type: 'number',
+      description: 'Stop distance in MES ticks of 0.25 index points.',
+    },
+    targetTicks: {
+      type: 'number',
+      description: 'Target distance in MES ticks of 0.25 index points.',
+    },
     expiresAt: { type: 'string', description: 'ISO timestamp after which the signal is stale.' },
   },
 }

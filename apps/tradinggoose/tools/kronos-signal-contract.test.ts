@@ -75,6 +75,38 @@ vi.mock('@/blocks', async () => {
 
 const ANCHOR = 5000
 
+/** A fresh VIX complex in the normal band, as `fetchVolatilityContext` returns one. */
+const VIX_CONTEXT = {
+  vix: {
+    symbol: 'VIX' as const,
+    last: 18.5,
+    open: 18,
+    asOf: '2026-03-02T12:29:00.000Z',
+    source: 'yahoo' as const,
+  },
+  vix3m: {
+    symbol: 'VIX3M' as const,
+    last: 19.5,
+    open: 19.2,
+    asOf: '2026-03-02T12:29:00.000Z',
+    source: 'yahoo' as const,
+  },
+}
+
+/** The outputs the VIX regime added, all flat primitives on the same response. */
+const REGIME_OUTPUTS = [
+  'regime',
+  'vix',
+  'vix3m',
+  'vixStale',
+  'impliedMoveFraction',
+  'impliedMovePoints',
+  'stopPoints',
+  'targetPoints',
+  'stopTicks',
+  'targetTicks',
+] as const
+
 const MARKET_SERIES = {
   listing: { listing_type: 'default', listing_id: 'MES', base_id: '', quote_id: '' },
   interval: '5m',
@@ -101,6 +133,10 @@ const signalInResponse = (body: any) =>
   deriveKronosSignal({
     forecast: body?.forecast,
     closes: (body?.marketSeries?.bars ?? []).map((bar: { close: number }) => bar.close),
+    // The route fetches its own VIX context when the body carries none, and the block has
+    // no VIX input to send one from - so the stand-in route answers with the context the
+    // real one would have fetched, stamped fresh at the response's own instant.
+    volatility: VIX_CONTEXT,
     config: body?.config,
     now: new Date('2026-03-02T12:30:00.000Z'),
   })
@@ -297,6 +333,53 @@ describe('kronos signal block -> tool -> route contract', () => {
       }
     })
 
+    it('declares the VIX regime outputs, and produces them', async () => {
+      const response = representativeResponse() as unknown as Record<string, unknown>
+
+      for (const field of REGIME_OUTPUTS) {
+        expect(KronosSignalBlock.outputs[field], `${field} is not declared`).toBeDefined()
+        expect(response[field], `${field} was not produced`).toBeDefined()
+      }
+
+      // The representative response is a fresh normal tape: a tradable regime with a
+      // bracket sized from the move it implies.
+      expect(response.regime).toBe('normal')
+      expect(response.vix).toBe(18.5)
+      expect(response.vixStale).toBe(false)
+      expect(response.stopPoints as number).toBeGreaterThan(0)
+      expect(response.targetTicks as number).toBeCloseTo(
+        (response.targetPoints as number) / 0.25,
+        9
+      )
+    })
+
+    it('produces the same fields, as the nulls the block declares, with no VIX at all', () => {
+      // The one case the representative response cannot show: the route fetched nothing
+      // and the signal stood aside. Every key is still there, so a downstream reference
+      // resolves to a null rather than to undefined.
+      const withoutVix = deriveKronosSignal({
+        forecast: FORECAST,
+        closes: MARKET_SERIES.bars.map((bar) => bar.close),
+        now: new Date('2026-03-02T12:30:00.000Z'),
+      }) as unknown as Record<string, unknown>
+
+      expect(Object.keys(withoutVix).sort()).toEqual(Object.keys(KronosSignalBlock.outputs).sort())
+      expect(withoutVix.regime).toBe('unknown')
+      expect(withoutVix.vixStale).toBe(true)
+      expect(withoutVix.action).toBe('no_trade')
+      expect(withoutVix.vix).toBeNull()
+      for (const field of [
+        'impliedMoveFraction',
+        'impliedMovePoints',
+        'stopPoints',
+        'targetPoints',
+        'stopTicks',
+        'targetTicks',
+      ]) {
+        expect(withoutVix[field], field).toBeNull()
+      }
+    })
+
     it('resolves each declared output from the executed block', async () => {
       const { output } = await dispatchStoredKronosSignalBlock({
         forecast: JSON.stringify(FORECAST),
@@ -312,6 +395,7 @@ describe('kronos signal block -> tool -> route contract', () => {
       expect(output.action).toBe('buy')
       expect(output.agreement).toBe(0.8)
       expect(output.minAgreement).toBe(0.7)
+      expect(output.regime).toBe('normal')
     })
   })
 
