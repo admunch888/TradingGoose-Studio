@@ -122,6 +122,17 @@ class ForecastBand(ApiModel):
     high: float
 
 
+# How much the sampled paths agreed on direction: `share_up` is the fraction whose terminal
+# close landed above the last historical close. Also omitted at one sample, for the same reason
+# as the band: one path agreeing with itself is not agreement. A band can only ever answer
+# "at least 90% landed here", so a caller with a majority-agreement rule needs this number.
+class ForecastEnsemble(ApiModel):
+    # `share_up` is bounded inclusively at both ends: 0.0 and 1.0 are the answers for an
+    # ensemble that agreed unanimously one way or the other, not edge cases to reject.
+    sample_count: int = Field(ge=1)
+    share_up: float = Field(ge=0, le=1)
+
+
 class ForecastPoint(ApiModel):
     timestamp: datetime
     open: float
@@ -172,3 +183,4 @@ class ForecastResponse(ApiModel):
     parameters: ForecastParameters
     diagnostics: ForecastDiagnostics
     timing_ms: ForecastTiming
+    ensemble: ForecastEnsemble | None = None

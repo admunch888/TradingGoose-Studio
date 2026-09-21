@@ -87,6 +87,18 @@ const ForecastBandSchema = z.object({
 
 export type ForecastBand = z.infer<typeof ForecastBandSchema>
 
+// How much the sampled paths agreed on direction: the share whose terminal close landed
+// above the last historical close. Absent, not null, at one sample (there is no agreement
+// in a single path), so anything reading it must handle `undefined`.
+const ForecastEnsembleSchema = z.object({
+  sampleCount: z.number().int(),
+  // Both ends are real answers - a unanimous ensemble reports exactly 0 or 1 - so the
+  // bounds are inclusive.
+  shareUp: z.number().min(0).max(1),
+})
+
+export type ForecastEnsemble = z.infer<typeof ForecastEnsembleSchema>
+
 export const ForecastPointSchema = z.object({
   timestamp: z.string(),
   open: z.number(),
@@ -128,6 +140,9 @@ export const ForecastResponseSchema = z.object({
     topP: z.number(),
     sampleCount: z.number().int(),
   }),
+  // The count actually reduced and the share of samples that agreed on direction, omitted
+  // by the service at one sample (`response_model_exclude_none`).
+  ensemble: ForecastEnsembleSchema.optional(),
   diagnostics: z.object({
     volumeImputed: z.boolean(),
     amountImputed: z.boolean(),

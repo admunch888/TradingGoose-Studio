@@ -83,7 +83,7 @@ import {
   knowledgeSearchTool,
   knowledgeUploadChunkTool,
 } from '@/tools/knowledge'
-import { kronosForecastTool } from '@/tools/kronos'
+import { kronosForecastTool, kronosSignalTool } from '@/tools/kronos'
 import { linearCreateIssueTool, linearReadIssuesTool } from '@/tools/linear'
 import { linkupSearchTool } from '@/tools/linkup'
 import { historicalDataTool } from '@/tools/market_data'
@@ -316,6 +316,7 @@ export const tools: Record<string, ToolConfig> = {
   guardrails_validate: guardrailsValidateTool,
   jina_read_url: readUrlTool,
   kronos_forecast: kronosForecastTool,
+  kronos_signal: kronosSignalTool,
   linkup_search: linkupSearchTool,
   resend_send: mailSendTool,
   sms_send: smsSendTool,

@@ -101,9 +101,10 @@ def create_app(settings: Settings | None = None, runtime: Any | None = None) -> 
             raise HTTPException(status_code=503, detail="Kronos model is not ready")
         return {"status": "ready", "model": model_runtime.metadata}
 
-    # exclude_none keeps an absent ensemble band out of the payload entirely: `"band": null`
-    # would read as a band that was computed and came out flat. `band` is the only optional
-    # field in the response tree, so this widens nothing else.
+    # exclude_none keeps an absent ensemble summary out of the payload entirely: `"band": null`
+    # or `"ensemble": null` would read as something that was computed and came out flat. `band`
+    # and the top-level `ensemble` are the only optional fields in the response tree, so this
+    # widens nothing else.
     @app.post(
         "/v1/forecast",
         response_model=ForecastResponse,
@@ -129,7 +130,7 @@ def create_app(settings: Settings | None = None, runtime: Any | None = None) -> 
         try:
             async with gate.enter() as queue_ms:
                 inference_started = perf_counter()
-                raw_points = await run_in_threadpool(model_runtime.predict, request)
+                prediction = await run_in_threadpool(model_runtime.predict, request)
                 inference_ms = (perf_counter() - inference_started) * 1000
         except QueueFullError as error:
             raise HTTPException(status_code=429, detail=str(error)) from error
@@ -140,7 +141,7 @@ def create_app(settings: Settings | None = None, runtime: Any | None = None) -> 
             # Reconciles whichever series the runtime returned: a single path, or the median
             # path of an ensemble. A band rides along inside the raw point untouched - it is
             # percentiles of the sampled closes, not a candle to be widened.
-            points, reconciliation_count = reconcile_points(raw_points)
+            points, reconciliation_count = reconcile_points(prediction.points)
         except (ValueError, TypeError) as error:
             raise HTTPException(status_code=502, detail="Kronos returned invalid forecast data") from error
         if len(points) != len(request.future_timestamps):
@@ -167,6 +168,9 @@ def create_app(settings: Settings | None = None, runtime: Any | None = None) -> 
                 last_completed_bar_timestamp=request.history[-1].timestamp,
             ),
             parameters=request.parameters,
+            # None at one sample, and dropped from the payload by exclude_none rather than
+            # sent as null: a single path has no agreement to report.
+            ensemble=prediction.ensemble,
             diagnostics=ForecastDiagnostics(
                 volume_imputed=volume_imputed,
                 amount_imputed=amount_imputed,

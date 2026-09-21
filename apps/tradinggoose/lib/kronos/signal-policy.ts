@@ -40,9 +40,20 @@ export const DEFAULT_SIGNAL_POLICY_CONFIG: SignalPolicyConfig = {
 
 export class KronosSignalPolicy {
   private config: SignalPolicyConfig
+  /**
+   * Optional evaluation instant. The gates below are pure and take no clock; only
+   * the expiries do, and a caller that knows when it is deciding (or a test) can
+   * pin them instead of reading the wall clock. Absent, it is `Date.now()`.
+   */
+  private now: Date | undefined
 
-  constructor(config: Partial<SignalPolicyConfig> = {}) {
+  constructor(config: Partial<SignalPolicyConfig> = {}, now?: Date) {
     this.config = { ...DEFAULT_SIGNAL_POLICY_CONFIG, ...config }
+    this.now = now
+  }
+
+  private nowMs(): number {
+    return this.now ? this.now.getTime() : Date.now()
   }
 
   evaluate(input: SignalPolicyInput): SignalPolicyResult {
@@ -61,7 +72,7 @@ export class KronosSignalPolicy {
     const direction: SignalAction =
       forecastTerminalReturn > 0 ? 'buy' : forecastTerminalReturn < 0 ? 'sell' : 'no_trade'
 
-    let score = absReturn
+    const score = absReturn
     const reasons: string[] = []
 
     // Volatility gate
@@ -117,7 +128,7 @@ export class KronosSignalPolicy {
     return {
       action: direction,
       reason: reasons.join(' '),
-      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+      expiresAt: new Date(this.nowMs() + 5 * 60_000).toISOString(),
       metadata: {
         terminalReturn: forecastTerminalReturn,
         predictedDrawdown: predictedPathDrawdown,
@@ -135,7 +146,7 @@ export class KronosSignalPolicy {
     return {
       action: 'no_trade',
       reason,
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      expiresAt: new Date(this.nowMs() + 60_000).toISOString(),
       metadata: {
         terminalReturn: input.forecastTerminalReturn,
         predictedDrawdown: input.predictedPathDrawdown,
