@@ -91,10 +91,17 @@ services:
       IBKR_API_IP: ${IBKR_API_IP:?IBKR_API_IP is required}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?INTERNAL_API_SECRET is required}
       # Trust the local CAs that sign this host's TLS leaves:
-      #  - Obsidian MCP server (https://100.64.0.8:8443)
-      #  - the app's own leaf on https://100.64.0.8:3000 (TradingGoose Local CA),
-      #    needed for internal self-HTTP calls (function blocks, tool dispatch)
-      NODE_EXTRA_CA_CERTS: /opt/certs/obsidian-ca.crt,/opt/certs/tradinggoose-ca.crt
+      #  - Obsidian MCP server (https://100.64.0.8:8443)      -> HX90 Local CA
+      #  - the app's own leaf on https://100.64.0.8:3000      -> TradingGoose Local CA
+      #    (needed because function blocks and tool dispatch call this app's own
+      #     API over https via NEXT_PUBLIC_APP_URL)
+      #
+      # Bun does NOT accept a comma-separated list: it treats the whole string as
+      # one path, fails to load it, logs "ignoring extra certs", and then trusts
+      # nothing - so the CAs must be concatenated into a single bundle file.
+      # Regenerate after changing either source CA:
+      #   cat certs/obsidian-ca.crt certs/tradinggoose-ca.crt > certs/local-cas.crt
+      NODE_EXTRA_CA_CERTS: /opt/certs/local-cas.crt
 
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       BETTER_AUTH_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
@@ -103,8 +110,7 @@ services:
       KRONOS_INTERNAL_URL: http://kronos-inference:8000
       KRONOS_INTERNAL_TOKEN: ${KRONOS_API_TOKEN:?Set KRONOS_API_TOKEN in .env}
     volumes:
-      - ./certs/obsidian-ca.crt:/opt/certs/obsidian-ca.crt:ro
-      - ./certs/tradinggoose-ca.crt:/opt/certs/tradinggoose-ca.crt:ro
+      - ./certs:/opt/certs:ro
     depends_on:
       db:
         condition: service_healthy
