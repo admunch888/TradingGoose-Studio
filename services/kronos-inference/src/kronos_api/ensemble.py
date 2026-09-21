@@ -21,6 +21,28 @@ LOW_PERCENTILE = 10.0
 HIGH_PERCENTILE = 90.0
 
 
+def _as_sample_array(samples: np.ndarray) -> np.ndarray:
+    """Validate the `(sample_count, pred_len, len(SAMPLE_FIELDS))` shape every reduction wants.
+
+    Shared by the reductions below so they agree on what an acceptable array is: the field
+    order is the only thing tying a column to a name, and a caller that gets it wrong reads a
+    volume as a close and gets a confident, wrong answer back.
+    """
+    samples = np.asarray(samples, dtype=float)
+    if samples.ndim != 3:
+        raise ValueError(
+            f"expected a 3-D (sample_count, pred_len, features) array, got shape {samples.shape}"
+        )
+    if samples.shape[2] != len(SAMPLE_FIELDS):
+        raise ValueError(
+            f"expected {len(SAMPLE_FIELDS)} feature columns {SAMPLE_FIELDS}, got shape {samples.shape}"
+        )
+    # No samples means nothing to reduce; no steps means no closes to reduce at all.
+    if samples.shape[0] < 1 or samples.shape[1] < 1:
+        raise ValueError(f"expected at least one sample and one step, got shape {samples.shape}")
+    return samples
+
+
 def summarise_samples(
     samples: np.ndarray,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -39,17 +61,7 @@ def summarise_samples(
     one-sample band is zero-width and would read as a real, confident result - the
     caller should see "no uncertainty estimate", not a line.
     """
-    samples = np.asarray(samples, dtype=float)
-    if samples.ndim != 3:
-        raise ValueError(
-            f"expected a 3-D (sample_count, pred_len, features) array, got shape {samples.shape}"
-        )
-    if samples.shape[2] != len(SAMPLE_FIELDS):
-        raise ValueError(
-            f"expected {len(SAMPLE_FIELDS)} feature columns {SAMPLE_FIELDS}, got shape {samples.shape}"
-        )
-    if samples.shape[0] < 1 or samples.shape[1] < 1:
-        raise ValueError(f"expected at least one sample and one step, got shape {samples.shape}")
+    samples = _as_sample_array(samples)
 
     median = np.median(samples, axis=0)
     points: list[dict[str, Any]] = [
@@ -67,3 +79,20 @@ def summarise_samples(
         for step in range(percentiles.shape[1])
     ]
     return points, bands
+
+
+def direction_agreement(samples: np.ndarray, anchor_close: float) -> float:
+    """Share of sampled paths whose terminal close lands above `anchor_close`.
+
+    The counts a caller actually gets from `summarise_samples`: the median says where the
+    paths landed and the band says how tightly, but neither says how many of them leaned the
+    way the median does. A p10/p90 band cannot either - it only ever answers "this share is
+    at least 90%" - so a rule like "three quarters of the samples must agree on direction"
+    has to be evaluated against the share itself.
+
+    `anchor_close` is the last historical close, and the comparison is strict, so a sample
+    that closes exactly at the anchor is not counted as up: unchanged is not a direction.
+    """
+    samples = _as_sample_array(samples)
+    terminal = samples[:, -1, CLOSE_COLUMN]
+    return float(np.count_nonzero(terminal > float(anchor_close)) / terminal.shape[0])

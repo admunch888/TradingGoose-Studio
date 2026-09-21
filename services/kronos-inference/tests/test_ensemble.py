@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from kronos_api.ensemble import SAMPLE_FIELDS, summarise_samples
+from kronos_api.ensemble import SAMPLE_FIELDS, direction_agreement, summarise_samples
 
 CLOSE_COLUMN = SAMPLE_FIELDS.index("close")
 
@@ -116,3 +116,83 @@ def test_single_sample_returns_the_path_itself_and_no_band():
 def test_shape_guards_reject_arrays_that_cannot_be_reduced(shape):
     with pytest.raises(ValueError):
         summarise_samples(np.zeros(shape))
+
+
+def test_summarise_samples_still_returns_the_path_and_band_pair():
+    # The service's only other reduction is built next to this one, and callers destructure
+    # exactly two values out of it: a third return value here would break every one of them.
+    samples = sampled([100.0, 101.0], [99.0, 98.0])
+
+    result = summarise_samples(samples)
+
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    points, bands = result
+    # One entry per step in each half of the pair.
+    assert len(points) == len(bands) == 2
+
+
+def direction_samples(*final_closes: float) -> np.ndarray:
+    """One two-step path per sample, ending at the given close."""
+    samples = np.zeros((len(final_closes), 2, len(SAMPLE_FIELDS)))
+    samples[:, :, CLOSE_COLUMN] = np.array([[close - 1.0, close] for close in final_closes])
+    return samples
+
+
+def test_all_samples_above_the_anchor_agree_completely():
+    share = direction_agreement(direction_samples(101.0, 102.0, 103.0, 104.0), 100.0)
+
+    assert share == 1.0
+
+
+def test_no_sample_above_the_anchor_agrees_not_at_all():
+    share = direction_agreement(direction_samples(99.0, 98.0, 97.0, 96.0), 100.0)
+
+    assert share == 0.0
+
+
+def test_share_is_the_count_of_up_samples_over_all_samples():
+    # Three of four end higher; the path that got there does not matter, only the last step.
+    share = direction_agreement(direction_samples(103.0, 101.0, 99.0, 108.0), 100.0)
+
+    assert share == pytest.approx(0.75)
+
+
+def test_a_sample_closing_exactly_at_the_anchor_is_not_up():
+    # Unchanged is not a direction: a rule that asks for a majority up must not be satisfied
+    # by samples that went nowhere.
+    share = direction_agreement(direction_samples(100.0, 101.0), 100.0)
+
+    assert share == pytest.approx(0.5)
+
+
+def test_only_the_terminal_step_is_compared_to_the_anchor():
+    # Every path crosses the anchor on the way, and only the last close decides the count.
+    samples = direction_samples(99.0, 101.0)
+    samples[:, 0, CLOSE_COLUMN] = [120.0, 60.0]
+
+    share = direction_agreement(samples, 100.0)
+
+    assert share == pytest.approx(0.5)
+
+
+def test_a_single_sample_reports_whether_its_one_path_is_up():
+    # Not a special case to omit here - the runtime is what drops the summary at one sample,
+    # so that the endpoint can say "no agreement to report" rather than "100% agreed".
+    assert direction_agreement(direction_samples(105.0), 100.0) == 1.0
+    assert direction_agreement(direction_samples(95.0), 100.0) == 0.0
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (2, 3),  # not 3-D
+        (2, 3, 5),  # one feature short
+        (2, 3, 7),  # one feature too many
+        (0, 3, 6),  # no samples, so nothing to count
+        (2, 0, 6),  # no steps, so no terminal close to compare
+    ],
+)
+def test_agreement_guards_reject_arrays_that_cannot_be_counted(shape):
+    with pytest.raises(ValueError):
+        direction_agreement(np.zeros(shape), 100.0)

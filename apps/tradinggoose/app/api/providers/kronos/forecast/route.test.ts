@@ -81,9 +81,11 @@ const buildBlockPayload = (overrides: Record<string, unknown> = {}) => ({
 })
 
 // `sampleCount` above 1 is the ensemble: the service returns the median path and puts a
-// 10th/90th percentile band on every point. At one sample the key is absent, not null,
-// which is why the default fixture below carries none.
+// 10th/90th percentile band on every point, plus the top-level agreement summary. At one
+// sample both keys are absent, not null, which is why the default fixture below carries none.
 const BAND = { low: 139.5, high: 141.5 }
+const SHARE_UP = 0.75
+const ENSEMBLE = { sampleCount: 4, shareUp: SHARE_UP }
 
 const buildForecastResponse = ({
   sampleCount = 1,
@@ -120,6 +122,7 @@ const buildForecastResponse = ({
     lastCompletedBarTimestamp: '2026-01-05T17:45:00.000Z',
   },
   parameters: { temperature: 1, topP: 0.9, sampleCount },
+  ...(sampleCount > 1 ? { ensemble: { sampleCount, shareUp: SHARE_UP } } : {}),
   diagnostics: {
     volumeImputed: false,
     amountImputed: false,
@@ -353,15 +356,59 @@ describe('kronos forecast route', () => {
       expect(banded.data?.parameters.sampleCount).toBe(4)
     })
 
+    it('carries the ensemble agreement through the route unchanged', async () => {
+      mocks.callKronosForecast.mockResolvedValue(buildForecastResponse({ sampleCount: 4 }))
+
+      const response = await POST(
+        buildRequest(buildBlockPayload({ parameters: { sampleCount: 4 } }))
+      )
+
+      expect(response.status).toBe(200)
+      const payload = await response.json()
+      // Not merely accepted by the schema: the number has to survive the route, because a
+      // zod-stripped field is exactly the failure this is here to catch.
+      expect(payload).toMatchObject({ ensemble: ENSEMBLE })
+
+      const parsed = ForecastResponseSchema.safeParse(payload)
+      expect(parsed.success).toBe(true)
+      expect(parsed.data?.ensemble).toEqual(ENSEMBLE)
+      expect(parsed.data?.parameters.sampleCount).toBe(4)
+    })
+
+    it('still validates a response with no ensemble key at all', async () => {
+      // A one-sample service response, and equally an older service that never sent one.
+      mocks.callKronosForecast.mockResolvedValue(buildForecastResponse())
+
+      const response = await POST(buildRequest(buildBlockPayload()))
+
+      expect(response.status).toBe(200)
+      const parsed = ForecastResponseSchema.safeParse(await response.json())
+      expect(parsed.success).toBe(true)
+      expect(parsed.data).not.toHaveProperty('ensemble')
+      expect(parsed.data?.parameters.sampleCount).toBe(1)
+    })
+
+    it('accepts a unanimous ensemble, where shareUp is exactly 0 or 1', () => {
+      for (const shareUp of [0, 1]) {
+        const parsed = ForecastResponseSchema.safeParse({
+          ...buildForecastResponse({ sampleCount: 4 }),
+          ensemble: { sampleCount: 4, shareUp },
+        })
+
+        expect(parsed.success).toBe(true)
+        expect(parsed.data?.ensemble?.shareUp).toBe(shareUp)
+      }
+    })
+
     it('strips an unknown key rather than refusing the response', () => {
       // Not `.strict()`: a newer service's extra field must not break an older app.
       const parsed = ForecastResponseSchema.safeParse({
         ...buildForecastResponse({ sampleCount: 4 }),
-        ensemble: { method: 'median' },
+        samplingTrace: { method: 'median' },
       })
 
       expect(parsed.success).toBe(true)
-      expect(parsed.data).not.toHaveProperty('ensemble')
+      expect(parsed.data).not.toHaveProperty('samplingTrace')
     })
   })
 

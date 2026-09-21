@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from kronos_api.config import Settings
 from kronos_api.main import create_app
+from kronos_api.runtime import Prediction
+from kronos_api.schemas import ForecastEnsemble
 
 
 TOKEN = "test-token-that-is-at-least-thirty-two-characters"
@@ -22,7 +24,7 @@ class FakeRuntime:
 
     def predict(self, request):
         close = request.history[-1].close
-        return [
+        points = [
             {
                 "timestamp": timestamp,
                 "open": close,
@@ -34,6 +36,8 @@ class FakeRuntime:
             }
             for timestamp in request.future_timestamps
         ]
+        # A single sample: no ensemble summary, which is what keeps the key off the wire.
+        return Prediction(points=points)
 
 
 class EnsembleRuntime(FakeRuntime):
@@ -44,13 +48,18 @@ class EnsembleRuntime(FakeRuntime):
 
     def predict(self, request):
         self.sample_counts.append(request.parameters.sample_count)
-        points = super().predict(request)
-        for index, point in enumerate(points):
+        prediction = super().predict(request)
+        for index, point in enumerate(prediction.points):
             point["band"] = {
                 "low": point["close"] - 2.0 - index,
                 "high": point["close"] + 2.0 + index,
             }
-        return points
+        return Prediction(
+            points=prediction.points,
+            ensemble=ForecastEnsemble(
+                sample_count=request.parameters.sample_count, share_up=0.75
+            ),
+        )
 
 
 def settings(**overrides) -> Settings:
@@ -204,6 +213,39 @@ def test_forecast_omits_the_band_for_a_single_sample():
 
     assert response.status_code == 200
     assert all("band" not in point for point in response.json()["forecast"])
+
+
+def test_forecast_reports_the_ensemble_agreement_above_one_sample():
+    runtime = EnsembleRuntime()
+
+    with client(runtime) as test_client:
+        response = test_client.post(
+            "/v1/forecast",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=valid_request(sample_count=4),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ensemble"] == {"sampleCount": 4, "shareUp": 0.75}
+    # The count that ran and the count that was reduced, side by side.
+    assert payload["ensemble"]["sampleCount"] == payload["parameters"]["sampleCount"]
+
+
+def test_forecast_omits_the_ensemble_for_a_single_sample():
+    with client() as test_client:
+        response = test_client.post(
+            "/v1/forecast",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json=valid_request(sample_count=1),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Absent, not null: there is no agreement in one path, and "shareUp": null would read as
+    # an agreement that could not be computed.
+    assert "ensemble" not in payload
+    assert payload["parameters"]["sampleCount"] == 1
 
 
 def test_forecast_refuses_a_sample_count_above_the_configured_cap():

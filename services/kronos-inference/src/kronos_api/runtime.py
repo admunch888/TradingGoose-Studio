@@ -1,12 +1,28 @@
 import math
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from kronos_api.config import Settings
-from kronos_api.ensemble import SAMPLE_FIELDS, summarise_samples
-from kronos_api.schemas import ForecastRequest
+from kronos_api.ensemble import SAMPLE_FIELDS, direction_agreement, summarise_samples
+from kronos_api.schemas import ForecastEnsemble, ForecastRequest
+
+
+@dataclass(frozen=True)
+class Prediction:
+    """What one `predict` call produces: the path callers read, plus the ensemble summary.
+
+    The agreement summary rides out alongside the points because `main` only ever sees the
+    points - the sampled array it was computed from is gone by then - and because it is one
+    fact about the whole ensemble rather than a property of any single point.
+
+    `ensemble` is None for a single sample, which is what keeps the wire field absent.
+    """
+
+    points: list[dict[str, Any]]
+    ensemble: ForecastEnsemble | None = None
 
 
 def _build_point(timestamp: datetime, values: dict[str, float]) -> dict[str, Any]:
@@ -82,7 +98,7 @@ class KronosRuntime:
             verbose=False,
         )
 
-    def predict(self, request: ForecastRequest) -> list[dict[str, Any]]:
+    def predict(self, request: ForecastRequest) -> Prediction:
         if not self.ready or self._predictor is None:
             raise RuntimeError("Kronos model is not ready")
 
@@ -106,6 +122,7 @@ class KronosRuntime:
         sample_count = request.parameters.sample_count
         paths: list[dict[str, Any]]
         bands: list[dict[str, Any]] = []
+        ensemble: ForecastEnsemble | None = None
         if sample_count == 1:
             # One sample is the call this service has always made: the model's own single
             # path, whose frame is already what the response wants.
@@ -140,6 +157,14 @@ class KronosRuntime:
                 return_samples=True,
             )
             paths, bands = summarise_samples(samples)
+            # The count comes off the array rather than off the request: the two are the same
+            # number today (the model returns one path per requested sample), but if a future
+            # predictor ever returned fewer, the wire would report what was actually reduced
+            # next to the median and band it was reduced with, not what was asked for.
+            ensemble = ForecastEnsemble(
+                sample_count=int(samples.shape[0]),
+                share_up=direction_agreement(samples, float(request.history[-1].close)),
+            )
 
         points: list[dict[str, Any]] = []
         for index, (timestamp, values) in enumerate(zip(future, paths)):
@@ -149,4 +174,4 @@ class KronosRuntime:
                 # uncertainty estimate", a zero-width one would claim certainty.
                 point["band"] = bands[index]
             points.append(point)
-        return points
+        return Prediction(points=points, ensemble=ensemble)
