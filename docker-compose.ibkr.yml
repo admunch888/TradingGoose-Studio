@@ -111,6 +111,18 @@ services:
       KRONOS_INTERNAL_TOKEN: ${KRONOS_API_TOKEN:?Set KRONOS_API_TOKEN in .env}
     volumes:
       - ./certs:/opt/certs:ro
+      # Backtest artifacts (bar cache + per-window results jsonl). These must NOT
+      # live in the container's /tmp: that is wiped by a restart, a recreate
+      # (`up -d`) and an image rebuild, and a --samples 8 run is ~35-50h, so losing
+      # it costs the whole measurement. A bind mount also makes the results
+      # readable from the host without a copy-out dance.
+      # The container runs as uid 1001, so the host dir must be writable by it:
+      #   mkdir -p /opt/tradinggoose/backtest && chmod 0777 /opt/tradinggoose/backtest
+      # Run the backtest against it:
+      #   bun run apps/tradinggoose/scripts/kronos-backtest.ts --symbol "MES=F" \
+      #     --step 1 --samples 8 --bars /backtest/mes-bars.json \
+      #     --out /backtest/mes-ens.jsonl
+      - ./backtest:/backtest
     depends_on:
       db:
         condition: service_healthy
