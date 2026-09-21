@@ -97,6 +97,8 @@ services:
       BETTER_AUTH_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://realtime:3002}
       INTERNAL_REALTIME_URL: http://realtime:3002
+      KRONOS_INTERNAL_URL: http://kronos-inference:8000
+      KRONOS_INTERNAL_TOKEN: ${KRONOS_API_TOKEN:?Set KRONOS_API_TOKEN in .env}
     volumes:
       - ./certs/obsidian-ca.crt:/opt/certs/obsidian-ca.crt:ro
     depends_on:
@@ -115,6 +117,7 @@ services:
     expose:
       - '8000'
     environment:
+      KRONOS_API_TOKEN: ${KRONOS_API_TOKEN:?Set KRONOS_API_TOKEN in .env}
       KRONOS_MODEL_PATH: /models/kronos-base
       KRONOS_TOKENIZER_PATH: /models/kronos-tokenizer-base
     volumes:
