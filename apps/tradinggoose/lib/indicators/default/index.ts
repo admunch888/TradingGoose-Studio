@@ -31,6 +31,7 @@ import donchian from './donchian'
 import dpo from './dpo'
 import easeOfMovementValue from './easeOfMovementValue'
 import elderForce from './elderForce'
+import emaSmaCrossover from './emaSmaCrossover'
 import envelope from './envelope'
 import exponentialMovingAverage from './exponentialMovingAverage'
 import fisherTransform from './fisherTransform'
@@ -124,6 +125,7 @@ export const DEFAULT_INDICATORS: DefaultIndicatorDefinition[] = [
   dpo,
   easeOfMovementValue,
   elderForce,
+  emaSmaCrossover,
   envelope,
   exponentialMovingAverage,
   fisherTransform,
